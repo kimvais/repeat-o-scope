@@ -4,10 +4,13 @@ import sys
 from repeat_o_scope import cli
 
 
-def test_report_on_stdout_logs_on_stderr(transcripts):
+def test_report_on_stdout_logs_on_stderr(transcripts, tmp_path):
     transcripts.write([transcripts.user('<bash-input>gcloud auth login</bash-input>') for _ in range(4)])
     run = subprocess.run(
-        [sys.executable, '-c', 'from repeat_o_scope.cli import main; main()', 'commands', f'--root={transcripts.root}'],
+        [
+            sys.executable, '-c', 'from repeat_o_scope.cli import main; main()',
+            'commands', f'--root={transcripts.root}', f'--data_dir={tmp_path / "data"}',
+        ],
         capture_output=True,
         encoding='utf-8',
         timeout=120,

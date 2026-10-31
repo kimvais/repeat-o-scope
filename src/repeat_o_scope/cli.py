@@ -1,12 +1,13 @@
 """repeat-o-scope: reports on the last N days of Claude Code transcripts."""
 
 import collections
+import dataclasses
 import logging
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, findings, judge, render, transcripts
+from repeat_o_scope import cluster, declined, findings, judge, render, transcripts
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -31,13 +32,20 @@ class Scope:
 
     def __init__(
         self,
+        all: bool = False,
+        data_dir: str | None = None,
         days: int = 30,
         format: str = 'markdown',
         jev: bool = False,
         root: str | None = None,
         top: int = 20,
     ):
-        """`jev` sends closing lines and tool errors to TypeSafe (costs money, needs `TYPESAFE_API_KEY`)."""
+        """`jev` sends closing lines and tool errors to TypeSafe (costs money, needs `TYPESAFE_API_KEY`).
+
+        `all` shows findings you declined, too.
+        """
+        self._all = all
+        self._data_dir = Path(data_dir) if data_dir else declined.default_dir()
         self._root = Path(root) if root else Path.home() / '.claude' / 'projects'
         self._since = datetime.now(timezone.utc) - timedelta(days=days)
         self._days = days
@@ -61,11 +69,23 @@ class Scope:
         """Tool calls that keep failing, with denials apart."""
         return self._out(self._report_fails)
 
+    def decline(self, finding_id: str) -> str:
+        """Leaves a finding from the last run out of future reports."""
+        variants = declined.decline(data_dir=self._data_dir, finding_id=finding_id)
+        return f'Declined `{finding_id}`: {", ".join(variants)}'
+
     def _out(self, build) -> str:
         renderers = {'markdown': render.markdown, 'json': render.json_document}
         if self._format not in renderers:
             raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
-        return renderers[self._format](build(), top=self._top)
+        report = build()
+        declined.remember_last(data_dir=self._data_dir, report=report)
+        if not self._all:
+            report = dataclasses.replace(
+                report,
+                findings=declined.drop_declined(data_dir=self._data_dir, findings=report.findings),
+            )
+        return renderers[self._format](report, top=self._top)
 
     def _report_prompts(self) -> Report:
         return self._clustered('prompts', 'prompt', transcripts.iter_prompts(root=self._root, since=self._since))
