@@ -10,6 +10,7 @@ dependencies = [
     "platformdirs>=4",
     "rich>=13",
     "scikit-learn>=1.6",
+    "typesafe-sdk>=0.7.5",
 ]
 
 [project.scripts]
