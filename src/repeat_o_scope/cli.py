@@ -6,7 +6,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, judge, transcripts
+from repeat_o_scope import cluster, findings, judge, render, transcripts
+from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,8 +23,7 @@ _DENIED = re.compile(
     re.IGNORECASE,
 )
 _MIN_SIZE = 4
-_SHOWN_VARIANTS = 3
-_MAX_SHOWN_CHARS = 120
+_MAX_EXAMPLES = 3
 
 
 class Scope:
@@ -39,97 +39,119 @@ class Scope:
 
     def prompts(self) -> str:
         """Prompts you keep typing."""
-        texts = [cluster.normalise(p) for p in transcripts.iter_prompts(root=self._root, since=self._since)]
-        clusters, noise = cluster.rank(texts, min_size=_MIN_SIZE)
-        return self._render('Prompts you keep typing', clusters, noise=noise, count=len(texts), unit='prompts')
+        return render.markdown(self._report_prompts(), top=self._top)
 
     def commands(self) -> str:
         """Shell commands you keep running by hand with `!`."""
-        texts = [cluster.normalise(c) for c in transcripts.iter_commands(root=self._root, since=self._since)]
-        clusters, noise = cluster.rank(texts, min_size=_MIN_SIZE)
-        return self._render('Commands you keep running', clusters, noise=noise, count=len(texts), unit='commands')
+        return render.markdown(self._report_commands(), top=self._top)
 
     def asks(self) -> str:
         """Turn endings that were answered with a bare go-ahead."""
+        return render.markdown(self._report_asks(), top=self._top)
+
+    def fails(self) -> str:
+        """Tool calls that keep failing, with denials apart."""
+        return render.markdown(self._report_fails(), top=self._top)
+
+    def _report_prompts(self) -> Report:
+        return self._clustered('prompts', 'prompt', transcripts.iter_prompts(root=self._root, since=self._since))
+
+    def _report_commands(self) -> Report:
+        return self._clustered('commands', 'command', transcripts.iter_commands(root=self._root, since=self._since))
+
+    def _report_asks(self) -> Report:
         ends = list(transcripts.iter_turn_ends(root=self._root, since=self._since))
         wasted = [e for e in ends if _GO_AHEAD.match(re.sub(r'\s+', ' ', e.reply.lower().strip()))]
         replies = collections.Counter(e.reply.lower().strip() for e in wasted)
         closings = collections.Counter(e.closing for e in wasted)
-        lines = [
-            '# What Claude asks that always gets a yes',
-            '',
-            f'_Last {self._days} days: {len(wasted)} of {len(ends)} turn endings were answered with a bare go-ahead '
-            f'({sum("?" not in e.closing[-3:] for e in wasted)} of them not even phrased as a question)._',
-            '',
-            'Replies: ' + ', '.join(f'{n} × {r}' for r, n in replies.most_common(8)),
-        ]
-        if self._jev:
+        if self._jev and closings:
             distinct = list(closings)
             kind_of = dict(zip(distinct, judge.kinds_of_asks(distinct)))
-            by_kind = collections.defaultdict(collections.Counter)
+            groups = collections.defaultdict(collections.Counter)
             for c, n in closings.items():
-                by_kind[kind_of[c]][c] = n
-            for kind, group in sorted(by_kind.items(), key=lambda kv: -kv[1].total()):
-                lines += ['', f'## {kind}: {group.total()}', '']
-                lines += [f'- {n} × {_shown(c)}' for c, n in group.most_common(self._top)]
+                groups[kind_of[c]][c] = n
         else:
-            lines += ['', '## Closing lines', '']
-            lines += [f'- {n} × {_shown(c)}' for c, n in closings.most_common(self._top)]
+            groups = {None: closings} if closings else {}
+        found = [
+            Finding(
+                # Not from the top closing line: exact phrasings rarely repeat, the kind of ask does.
+                id=findings.finding_id(report='asks', top_variant=f'*{label or ""}'),
+                kind='ask',
+                total=group.total(),
+                variants=[Variant(c, n) for c, n in group.most_common()],
+                examples=[c for c, _ in group.most_common(_MAX_EXAMPLES)],
+                label=label,
+            )
+            for label, group in sorted(groups.items(), key=lambda kv: -kv[1].total())
+        ]
         _LOGGER.info('Found `%s` wasted turn endings.', len(wasted))
-        return '\n'.join(lines)
-
-    def fails(self) -> str:
-        """Tool calls that keep failing, with denials apart."""
-        failed, denied = {}, []
-        for f in transcripts.iter_tool_failures(root=self._root, since=self._since):
-            key = cluster.normalise(f'{f.tool}: {f.error}')
-            if _DENIED.search(f.error):
-                denied.append(key)
-            else:
-                failed.setdefault(key, []).append(f)
-        keys = [k for k, fs in failed.items() for _ in fs]
-        clusters, noise = cluster.rank(keys, min_size=_MIN_SIZE)
-        note = ''
-        if self._jev and clusters:
-            # One example per group: the first failure behind its most frequent variant.
-            real = judge.real_failures([failed[c.variants[0][0]][0] for c in clusters])
-            dropped = sum(not r for r in real)
-            clusters = [c for c, r in zip(clusters, real) if r]
-            note = f'Jev judged {dropped} group(s) as noise on stderr and left them out.'
-        denied_clusters, denied_noise = cluster.rank(denied, min_size=_MIN_SIZE)
-        return (
-            self._render('Tool calls that keep failing', clusters, noise=noise, count=len(keys), unit='failures', note=note)
-            + '\n\n'
-            + self._render('Denied', denied_clusters, noise=denied_noise, count=len(denied), unit='denials', level='##')
+        return Report(
+            name='asks',
+            days=self._days,
+            jev=self._jev,
+            totals={
+                'turn_endings': len(ends),
+                'wasted': len(wasted),
+                'not_questions': sum('?' not in e.closing[-3:] for e in wasted),
+            },
+            findings=found,
+            note='Replies: ' + ', '.join(f'{n} × {r}' for r, n in replies.most_common(8)),
         )
 
-    def _render(
-        self,
-        title: str,
-        clusters: list[cluster.Cluster],
-        *,
-        count: int,
-        level: str = '#',
-        noise: int,
-        note: str = '',
-        unit: str,
-    ) -> str:
-        lines = [
-            f'{level} {title}',
-            '',
-            f'_Last {self._days} days: {count} {unit}, {len(clusters)} groups, {noise} one-offs._ {note}'.rstrip(),
-            '',
-        ]
-        for i, c in enumerate(clusters[: self._top], start=1):
-            variants = ' · '.join(f'{n} × {_shown(t)}' for t, n in c.variants[:_SHOWN_VARIANTS])
-            lines.append(f'{i}. **{c.total}**: {variants}')
-        _LOGGER.info('Ranked `%s` %s into `%s` groups.', count, unit, len(clusters))
-        return '\n'.join(lines)
+    def _report_fails(self) -> Report:
+        failed, denied = collections.defaultdict(list), collections.defaultdict(list)
+        for f in transcripts.iter_tool_failures(root=self._root, since=self._since):
+            key = cluster.normalise(f'{f.tool}: {f.error}')
+            (denied if _DENIED.search(f.error) else failed)[key].append(f)
+        failure_clusters, failure_noise = cluster.rank(_repeated(failed), min_size=_MIN_SIZE)
+        note, label = '', None
+        if self._jev and failure_clusters:
+            # One example per group: the first failure behind its most frequent variant.
+            real = judge.real_failures([failed[c.variants[0][0]][0] for c in failure_clusters])
+            note = f'Jev judged {sum(not r for r in real)} group(s) as noise on stderr and left them out.'
+            failure_clusters, label = [c for c, r in zip(failure_clusters, real) if r], 'real'
+        denial_clusters, denial_noise = cluster.rank(_repeated(denied), min_size=_MIN_SIZE)
+        originals = {
+            k: [f'{f.tool}: {f.attempt} → {f.error}' for f in fs] for k, fs in (failed | denied).items()
+        }
+        found = [
+            findings.from_cluster(report='fails', kind='failure', cluster=c, originals=originals, label=label)
+            for c in failure_clusters
+        ] + [findings.from_cluster(report='fails', kind='denial', cluster=c, originals=originals) for c in denial_clusters]
+        return Report(
+            name='fails',
+            days=self._days,
+            jev=self._jev,
+            totals={
+                'items': sum(map(len, failed.values())),
+                'groups': len(failure_clusters),
+                'one_offs': failure_noise,
+                'denials': sum(map(len, denied.values())),
+                'denial_groups': len(denial_clusters),
+                'denial_one_offs': denial_noise,
+            },
+            findings=found,
+            note=note,
+        )
+
+    def _clustered(self, name: str, kind: str, texts) -> Report:
+        originals = collections.defaultdict(list)
+        for text in texts:
+            originals[cluster.normalise(text)].append(text)
+        clusters, noise = cluster.rank(_repeated(originals), min_size=_MIN_SIZE)
+        _LOGGER.info('Ranked `%s` %s into `%s` groups.', sum(map(len, originals.values())), name, len(clusters))
+        return Report(
+            name=name,
+            days=self._days,
+            jev=self._jev,
+            totals={'items': sum(map(len, originals.values())), 'groups': len(clusters), 'one_offs': noise},
+            findings=[findings.from_cluster(report=name, kind=kind, cluster=c, originals=originals) for c in clusters],
+        )
 
 
-def _shown(text: str) -> str:
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text[:_MAX_SHOWN_CHARS] + '…' if len(text) > _MAX_SHOWN_CHARS else text
+def _repeated(groups: dict[str, list]) -> list[str]:
+    """Returns each key once per item behind it, the shape `cluster.rank` counts."""
+    return [k for k, items in groups.items() for _ in items]
 
 
 def main() -> None:
