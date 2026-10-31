@@ -1,0 +1,17 @@
+[project]
+name = "repeat-o-scope"
+version = "0.1.0"
+description = "Logs your Claude Code work, finds the prompts you keep repeating, and helps automate them away."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["platformdirs>=4"]
+
+[project.scripts]
+repeat-o-scope-worklog = "repeat_o_scope.worklog:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"

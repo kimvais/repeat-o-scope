@@ -1,0 +1,12 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"s-1"}
+{"type":"user","message":{"role":"user","content":"Fix   the\nbug "},"cwd":"C:\\work","gitBranch":"main","sessionId":"s-1"}
+{"type":"user","isMeta":true,"message":{"role":"user","content":"Caveat: injected by the harness"},"sessionId":"s-1"}
+{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"},"sessionId":"s-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"On it."},{"type":"tool_use","name":"Edit","input":{"file_path":"C:\\work\\a.py"}},{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]},"sessionId":"s-1"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"sessionId":"s-1"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"use token glpat-abcdefghij1234567890"},{"type":"text","text":"please"}]},"gitBranch":"feature","sessionId":"s-1"}
+{"type":"api-request-blob","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"C:\\work\\ignored.py"}}]},"sessionId":"s-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"C:\\work\\b.py"}},{"type":"tool_use","name":"Edit","input":{"file_path":"C:\\work\\a.py"}},{"type":"tool_use","name":"NotebookEdit","input":{"notebook_path":"C:\\work\\n.ipynb"}}]},"sessionId":"s-1"}
+not json at all
+
+{"type":"user","message":{"role":"user","content":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},"sessionId":"s-1"}
