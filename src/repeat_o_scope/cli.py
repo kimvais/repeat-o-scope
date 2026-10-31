@@ -29,29 +29,43 @@ _MAX_EXAMPLES = 3
 class Scope:
     """Finds what keeps repeating in your Claude Code sessions."""
 
-    def __init__(self, days: int = 30, jev: bool = False, root: str | None = None, top: int = 20):
+    def __init__(
+        self,
+        days: int = 30,
+        format: str = 'markdown',
+        jev: bool = False,
+        root: str | None = None,
+        top: int = 20,
+    ):
         """`jev` sends closing lines and tool errors to TypeSafe (costs money, needs `TYPESAFE_API_KEY`)."""
         self._root = Path(root) if root else Path.home() / '.claude' / 'projects'
         self._since = datetime.now(timezone.utc) - timedelta(days=days)
         self._days = days
+        self._format = format
         self._jev = jev
         self._top = top
 
     def prompts(self) -> str:
         """Prompts you keep typing."""
-        return render.markdown(self._report_prompts(), top=self._top)
+        return self._out(self._report_prompts)
 
     def commands(self) -> str:
         """Shell commands you keep running by hand with `!`."""
-        return render.markdown(self._report_commands(), top=self._top)
+        return self._out(self._report_commands)
 
     def asks(self) -> str:
         """Turn endings that were answered with a bare go-ahead."""
-        return render.markdown(self._report_asks(), top=self._top)
+        return self._out(self._report_asks)
 
     def fails(self) -> str:
         """Tool calls that keep failing, with denials apart."""
-        return render.markdown(self._report_fails(), top=self._top)
+        return self._out(self._report_fails)
+
+    def _out(self, build) -> str:
+        renderers = {'markdown': render.markdown, 'json': render.json_document}
+        if self._format not in renderers:
+            raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
+        return renderers[self._format](build(), top=self._top)
 
     def _report_prompts(self) -> Report:
         return self._clustered('prompts', 'prompt', transcripts.iter_prompts(root=self._root, since=self._since))
@@ -155,10 +169,14 @@ def _repeated(groups: dict[str, list]) -> list[str]:
 
 
 def main() -> None:
+    import sys
+
     import fire
     from rich.console import Console
     from rich.logging import RichHandler
 
+    # Findings quote prompts in any language; a legacy Windows code page must not crash the report.
+    sys.stdout.reconfigure(encoding='utf-8')
     # The report goes to stdout so it can be piped or saved; progress goes to stderr.
     handler = RichHandler(console=Console(stderr=True), show_path=False)
     logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[handler])
