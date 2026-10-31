@@ -1,6 +1,9 @@
-"""Turns a report into markdown for people."""
+"""Turns a report into markdown for people or JSON for the skill."""
 
+import dataclasses
+import json
 import re
+from datetime import datetime, timezone
 
 from repeat_o_scope.findings import Finding, Report
 
@@ -11,6 +14,19 @@ _TITLES = {
     'commands': ('Commands you keep running', 'commands'),
     'fails': ('Tool calls that keep failing', 'failures'),
 }
+
+
+def json_document(report: Report, *, top: int) -> str:
+    """Returns the report as JSON with every finding; `top` only limits markdown."""
+    doc = {
+        'report': report.name,
+        'days': report.days,
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'jev': report.jev,
+        'totals': report.totals,
+        'findings': [dataclasses.asdict(f) for f in report.findings],
+    }
+    return json.dumps(doc, ensure_ascii=False, indent=2)
 
 
 def markdown(report: Report, *, top: int) -> str:
