@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, declined, findings, judge, render, transcripts
+from repeat_o_scope import cluster, declined, findings, install, judge, render, transcripts
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ class Scope:
     def __init__(
         self,
         all: bool = False,
+        claude_dir: str | None = None,
         data_dir: str | None = None,
         days: int = 30,
         format: str = 'markdown',
@@ -45,8 +46,9 @@ class Scope:
         `all` shows findings you declined, too.
         """
         self._all = all
+        self._claude_dir = Path(claude_dir) if claude_dir else Path.home() / '.claude'
         self._data_dir = Path(data_dir) if data_dir else declined.default_dir()
-        self._root = Path(root) if root else Path.home() / '.claude' / 'projects'
+        self._root = Path(root) if root else self._claude_dir / 'projects'
         self._since = datetime.now(timezone.utc) - timedelta(days=days)
         self._days = days
         self._format = format
@@ -68,6 +70,14 @@ class Scope:
     def fails(self) -> str:
         """Tool calls that keep failing, with denials apart."""
         return self._out(self._report_fails)
+
+    def install(self) -> str:
+        """Installs the repeat-o-scope skill and the worklog Stop hook into ~/.claude."""
+        return '\n'.join(install.install(claude_dir=self._claude_dir)) or 'Already installed.'
+
+    def uninstall(self) -> str:
+        """Removes the repeat-o-scope skill and the worklog Stop hook from ~/.claude."""
+        return '\n'.join(install.uninstall(claude_dir=self._claude_dir)) or 'Nothing to remove.'
 
     def decline(self, finding_id: str) -> str:
         """Leaves a finding from the last run out of future reports."""
