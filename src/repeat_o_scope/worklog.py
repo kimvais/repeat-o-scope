@@ -22,6 +22,8 @@ from pathlib import Path
 
 import platformdirs
 
+from repeat_o_scope.redaction import redact
+
 _LOGGER = logging.getLogger(__name__)
 
 _GAP = timedelta(minutes=15)
@@ -29,14 +31,6 @@ _MAX_PROMPTS = 10
 _MAX_PROMPT_CHARS = 200
 _GIT_TIMEOUT_SECONDS = 5
 _EDIT_TOOLS = frozenset({'Edit', 'Write', 'MultiEdit', 'NotebookEdit'})
-# Credentials pasted into a prompt must not reach the log (it may live in a synced folder):
-# Google OAuth tokens and codes, GitLab, GitHub, Slack, AWS, Anthropic and OpenAI keys, private keys.
-# Case-insensitive because PowerShell's -replace is.
-_SECRET = re.compile(
-    r'ya29\.[\w-]+|\b4/0A[\w-]+|1//0[\w-]{20,}|glpat-[\w.-]+|gh[pousr]_\w{20,}|xox[abprs]-[\w-]+'
-    r'|AKIA[0-9A-Z]{16}|sk-(ant-)?[\w-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----',
-    re.IGNORECASE,
-)
 # Tool results, slash-command plumbing and injected reminders.
 _PLUMBING = re.compile(r'^\s*<(command-|local-command|system-reminder)', re.IGNORECASE)
 _CONTEXT = {
@@ -158,7 +152,8 @@ def _prompt_text(content) -> str:
 
 def _clean(text: str) -> str:
     """Returns the prompt on one line, redacted and cut to `_MAX_PROMPT_CHARS`."""
-    text = _SECRET.sub('[REDACTED]', re.sub(r'\s+', ' ', text).strip())
+    # Credentials pasted into a prompt must not reach the log (it may live in a synced folder).
+    text = redact(re.sub(r'\s+', ' ', text).strip())
     return text[:_MAX_PROMPT_CHARS] + '...' if len(text) > _MAX_PROMPT_CHARS else text
 
 
