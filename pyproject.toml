@@ -4,9 +4,16 @@ version = "0.1.0"
 description = "Logs your Claude Code work, finds the prompts you keep repeating, and helps automate them away."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["platformdirs>=4"]
+dependencies = [
+    "fire>=0.7",
+    "model2vec>=0.4",
+    "platformdirs>=4",
+    "rich>=13",
+    "scikit-learn>=1.6",
+]
 
 [project.scripts]
+repeat-o-scope = "repeat_o_scope.cli:main"
 repeat-o-scope-worklog = "repeat_o_scope.worklog:main"
 
 [dependency-groups]
