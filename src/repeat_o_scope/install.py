@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shutil
 from importlib import resources
 from pathlib import Path
@@ -12,7 +13,8 @@ _LOGGER = logging.getLogger(__name__)
 
 _HOOK = {'type': 'command', 'command': 'repeat-o-scope-worklog'}
 # The PowerShell hook this package replaces: two loggers would log every stretch twice.
-_REPLACED = 'worklog.ps1'
+# A whole file name only, so a user's own `my-team-worklog.ps1` survives.
+_REPLACED = re.compile(r'(^|[\\/\s"\'])worklog\.ps1\b')
 _BACKUP_SUFFIX = '.repeat-o-scope.bak'
 
 
@@ -23,12 +25,12 @@ def install(*, claude_dir: Path) -> list[str]:
     stop = settings.setdefault('hooks', {}).setdefault('Stop', [])
     changes = []
     for group in stop:
-        kept = [h for h in group.get('hooks', []) if _REPLACED not in h.get('command', '')]
+        kept = [h for h in group.get('hooks', []) if not _REPLACED.search(h.get('command', ''))]
         if len(kept) != len(group.get('hooks', [])):
-            changes.append(f'Removed the `{_REPLACED}` Stop hook from {settings_path}.')
+            changes.append(f'Removed the `worklog.ps1` Stop hook from {settings_path}.')
             group['hooks'] = kept
     stop[:] = [g for g in stop if g.get('hooks')]
-    if not any(_HOOK in g['hooks'] for g in stop):
+    if not any(_is_ours(h) for g in stop for h in g['hooks']):
         stop.append({'hooks': [dict(_HOOK)]})
         changes.append(f'Added the `{_HOOK["command"]}` Stop hook to {settings_path}.')
     if changes:
@@ -53,8 +55,8 @@ def uninstall(*, claude_dir: Path) -> list[str]:
     hooks = settings.get('hooks', {})
     stop = hooks.get('Stop', [])
     for group in stop:
-        if _HOOK in group.get('hooks', []):
-            group['hooks'] = [h for h in group['hooks'] if h != _HOOK]
+        if any(_is_ours(h) for h in group.get('hooks', [])):
+            group['hooks'] = [h for h in group['hooks'] if not _is_ours(h)]
             changes.append(f'Removed the `{_HOOK["command"]}` Stop hook from {settings_path}.')
     stop[:] = [g for g in stop if g.get('hooks')]
     if 'Stop' in hooks and not stop:
@@ -68,6 +70,11 @@ def uninstall(*, claude_dir: Path) -> list[str]:
         shutil.rmtree(skill.parent)
         changes.append(f'Removed the skill from {skill.parent}.')
     return changes
+
+
+def _is_ours(hook: dict) -> bool:
+    # By command, not the whole entry: a user may have added `timeout` or other keys to it.
+    return hook.get('command') == _HOOK['command']
 
 
 def _skill_path(claude_dir: Path) -> Path:

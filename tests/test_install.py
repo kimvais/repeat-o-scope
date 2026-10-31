@@ -63,6 +63,22 @@ def test_install_replaces_worklog_ps1_and_keeps_other_hooks(tmp_path):
     assert (tmp_path / 'settings.json.repeat-o-scope.bak').exists()
 
 
+def test_other_hook_with_worklog_ps1_in_its_name_survives(tmp_path):
+    theirs = {'hooks': [{'type': 'command', 'command': 'pwsh -File C:/team/my-team-worklog.ps1 --x'}]}
+    (tmp_path / 'settings.json').write_text(json.dumps({'hooks': {'Stop': [theirs]}}), encoding='utf-8')
+    install.install(claude_dir=tmp_path)
+    assert _settings(tmp_path) == {'hooks': {'Stop': [theirs, _OURS]}}
+
+
+def test_our_hook_with_extra_keys_is_not_duplicated(tmp_path):
+    customised = {'hooks': [{'type': 'command', 'command': 'repeat-o-scope-worklog', 'timeout': 30}]}
+    (tmp_path / 'settings.json').write_text(json.dumps({'hooks': {'Stop': [customised]}}), encoding='utf-8')
+    install.install(claude_dir=tmp_path)
+    assert _settings(tmp_path) == {'hooks': {'Stop': [customised]}}
+    install.uninstall(claude_dir=tmp_path)
+    assert _settings(tmp_path) == {}
+
+
 def test_uninstall_reverses_install(tmp_path):
     (tmp_path / 'settings.json').write_text(json.dumps({'model': 'x'}), encoding='utf-8')
     install.install(claude_dir=tmp_path)
