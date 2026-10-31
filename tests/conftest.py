@@ -46,3 +46,11 @@ class Transcripts:
 @pytest.fixture
 def transcripts(tmp_path):
     return Transcripts(tmp_path / 'projects')
+
+
+@pytest.fixture(autouse=True)
+def _data_dir(tmp_path, monkeypatch):
+    """Keeps every test's declined and last-findings state out of the real user data directory."""
+    from repeat_o_scope import declined
+
+    monkeypatch.setattr(declined, 'default_dir', lambda: tmp_path / 'data')

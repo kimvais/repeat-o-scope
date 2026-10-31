@@ -65,10 +65,13 @@ def test_json_whole_document(transcripts):
     }
 
 
-def test_json_utf8_on_legacy_console(transcripts):
+def test_json_utf8_on_legacy_console(transcripts, tmp_path):
     transcripts.write([transcripts.user('tämä → ✓') for _ in range(4)])
     run = subprocess.run(
-        [sys.executable, '-c', 'from repeat_o_scope.cli import main; main()', 'prompts', '--format=json', f'--root={transcripts.root}'],
+        [
+            sys.executable, '-c', 'from repeat_o_scope.cli import main; main()',
+            'prompts', '--format=json', f'--root={transcripts.root}', f'--data_dir={tmp_path / "data"}',
+        ],
         capture_output=True,
         env={**os.environ, 'PYTHONIOENCODING': 'cp1252'},
         timeout=120,
