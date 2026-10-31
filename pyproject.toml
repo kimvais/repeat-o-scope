@@ -3,6 +3,18 @@ name = "repeat-o-scope"
 version = "0.1.0"
 description = "Logs your Claude Code work, finds the prompts you keep repeating, and helps automate them away."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Kimmo Parviainen-Jalanko" }]
+keywords = ["claude-code", "automation", "productivity", "transcripts"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development",
+]
 requires-python = ">=3.12"
 dependencies = [
     "fire>=0.7",
@@ -12,6 +24,10 @@ dependencies = [
     "scikit-learn>=1.6",
     "typesafe-sdk>=0.7.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/kimvais/repeat-o-scope"
+Issues = "https://github.com/kimvais/repeat-o-scope/issues"
 
 [project.scripts]
 repeat-o-scope = "repeat_o_scope.cli:main"

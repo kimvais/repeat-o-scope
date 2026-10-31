@@ -2,6 +2,26 @@
 
 Logs your Claude Code work, finds the prompts you keep repeating, and helps automate them away.
 
+## Install
+
+```
+uv tool install repeat-o-scope
+repeat-o-scope install
+```
+
+`install` copies the `/repeat-o-scope` skill to `~/.claude/skills/` and registers the worklog Stop hook in
+`~/.claude/settings.json`. It replaces an old `worklog.ps1` Stop hook, backs `settings.json` up once to
+`settings.json.repeat-o-scope.bak`, and refuses to touch a settings file it can't parse. Running it again
+changes nothing. `repeat-o-scope uninstall` removes both.
+
+## The skill
+
+In Claude Code, run `/repeat-o-scope`, or ask what you keep repeating. The skill:
+1. Runs the four reports below as JSON.
+2. Picks at most four findings, the top one from each report first.
+3. Drafts a concrete fix for each: a shell function, a hook, a CLAUDE.md line, a script fix.
+4. Asks you once, applies only what you pick, and declines the rest so they don't come back.
+
 ## Reports
 
 ```
@@ -13,6 +33,12 @@ repeat-o-scope fails      # tool calls that keep failing, with denials listed ap
 
 Each report reads the transcripts under `~/.claude/projects` from the last 30 days (`--days`), and prints
 markdown on stdout (`--top` groups, default 20). Progress logging goes to stderr.
+
+- `--format json` prints every finding as JSON for the skill: an `id`, a `kind`, a `total`, the `variants`,
+  up to 3 redacted `examples`, and Jev's `label`.
+- `repeat-o-scope decline <id>` leaves a finding from the last run out of later reports, matched on its
+  variants. `--all` shows declined findings again. That state lives in the local user data directory,
+  never in a synced folder.
 
 The window is deliberately short. Claude Code deletes transcripts after 30 days anyway, and whatever you
 automated after an earlier run should drop out instead of dominating.
@@ -52,30 +78,14 @@ as it goes on, so **readers keep the last line per `@id`**.
 Each line records `cwd`, `repo`, `branch`, `started`, `last_stop`, `turns`, `tool_uses`, the files Claude
 edited, your last 10 prompts (cut to 200 characters, credentials redacted) and the transcript path.
 
-### Install
-
-```
-uv tool install git+ssh://git@github.com/kimvais/repeat-o-scope
-```
-
-Then add the hook to `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [{"hooks": [{"type": "command", "command": "repeat-o-scope-worklog"}]}]
-  }
-}
-```
-
-Set `REPEAT_O_SCOPE_LOG_DIR` to log somewhere other than `<Documents>/worklog`. Per-session state lives in
+`repeat-o-scope install` registers it. Set `REPEAT_O_SCOPE_LOG_DIR` to log somewhere other than `<Documents>/worklog`. Per-session state lives in
 `~/.claude/hooks/worklog-state`.
 
 ### Replacing `worklog.ps1`
 
 This is a port of the PowerShell hook `worklog.ps1`. It reads the same state directory, so session
-indexes (`s0494.1`, ...) carry on where the PowerShell hook stopped. Swap the hook command and remove
-the old one; running both at once would log every stretch twice.
+indexes (`s0494.1`, ...) carry on where the PowerShell hook stopped. `repeat-o-scope install` swaps the old
+hook out, because running both would log every stretch twice.
 
 Two differences from `worklog.ps1`:
 - The JSON-LD vocabulary is `urn:repeat-o-scope:worklog#` instead of `urn:vainu:worklog#`.
@@ -86,3 +96,9 @@ Two differences from `worklog.ps1`:
 ```
 uv run pytest
 ```
+
+## Releasing
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, builds and publishes to PyPI through
+trusted publishing (no API token). The first release needs a trusted publisher on PyPI for this repo,
+workflow `release.yml` and environment `pypi`.
