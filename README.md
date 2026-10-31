@@ -24,8 +24,24 @@ How it works:
 - Texts are normalised: lowercase, with paths, URLs, `!`/`#` references, hashes and numbers replaced by
   placeholders.
 - They are embedded locally with `model2vec` (`minishlab/potion-base-8M`, about 30 MB, downloaded once) and
-  grouped with scikit-learn's HDBSCAN. Nothing leaves the machine.
+  grouped with scikit-learn's HDBSCAN. Nothing leaves the machine unless you pass `--jev`.
 - A group needs at least 4 occurrences.
+
+### `--jev`
+
+Clustering can't tell a request for a go-ahead from a plain status line, or a real failure from a tool that
+only wrote to stderr. `--jev` hands those calls to [Jev](https://docs.typesafe.ai) (TypeSafe System One):
+
+- `asks --jev` groups each closing line by kind: permission, choice, clarifying, review or report.
+- `fails --jev` asks about one example per group and leaves out groups that are only stderr noise.
+
+It sends those closing lines and tool errors, already redacted, to TypeSafe, and it costs money per call. It
+needs `TYPESAFE_API_KEY`:
+
+```powershell
+$env:TYPESAFE_API_KEY = op item get TypeSafe --fields "api key" --reveal
+repeat-o-scope asks --jev
+```
 
 ## Worklog hook
 
