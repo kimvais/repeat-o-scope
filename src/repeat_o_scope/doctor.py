@@ -30,6 +30,8 @@ _AUTOCOMPACT_MIN_PCT = 50
 _LOW_EFFORT = {'low', 'medium'}
 # docs/why.md gives no number; above this, skill descriptions are a noticeable fixed cost per turn.
 _MAX_SKILLS = 30
+_FRONTMATTER = re.compile(r'---\r?\n(.*?)\r?\n---', re.DOTALL)
+_COMMAND_ONLY = re.compile(r'^disable-model-invocation:\s*["\']?true["\']?\s*$', re.MULTILINE | re.IGNORECASE)
 # The two rules docs/why.md says to copy first, matched by their key phrases; the fix is the rule's text there.
 _RULES = {
     'scope_rule': (
@@ -107,20 +109,28 @@ def _skill_overrides(layers: list[tuple[Path, dict]]) -> Check:
 
 
 def _skills(*, claude_dir: Path, layers: list[tuple[Path, dict]], project_dir: Path) -> Check:
-    names = [p.parent.name for d in (claude_dir / 'skills', project_dir / '.claude' / 'skills') for p in d.glob('*/SKILL.md')]
+    skills = {p.parent.name: p for d in (claude_dir / 'skills', project_dir / '.claude' / 'skills') for p in d.glob('*/SKILL.md')}
     enabled = {key for key, on in _merged(layers, key='enabledPlugins').items() if on is True}
     for key, install_path in _install_paths(claude_dir).items():
         if key in enabled:
             plugin = key.split('@')[0]
-            names += [f'{plugin}:{p.parent.name}' for p in Path(install_path).glob('skills/*/SKILL.md')]
+            skills |= {f'{plugin}:{p.parent.name}': p for p in Path(install_path).glob('skills/*/SKILL.md')}
     off = {name for name, state in _merged(layers, key='skillOverrides').items() if state == 'off'}
-    # An override names a skill bare (`plan`) or with its plugin (`sp:plan`).
-    count = sum(name not in off and name.split(':')[-1] not in off for name in names)
+    # An override names a skill as Claude Code lists it: a plugin skill only as `plugin:skill`.
+    # `"vjuu": "off"` left `vjuu:vjuu` enabled.
+    count = sum(name not in off and not _command_only(path) for name, path in skills.items())
     # Built-in and claude.ai skills are not on disk, so the real number is higher.
     found = f'at least {count} enabled'
     if count > _MAX_SKILLS:
         return Check('skills', False, found, "Turn off skills you never use: every enabled skill's description is in context on every turn.")
     return Check('skills', True, found, '')
+
+
+def _command_only(path: Path) -> bool:
+    """Returns whether a skill runs only as a /command: its description then stays out of context."""
+    text = path.read_text(encoding='utf-8-sig', errors='replace')
+    frontmatter = _FRONTMATTER.match(text)
+    return bool(frontmatter and _COMMAND_ONLY.search(frontmatter.group(1)))
 
 
 def _status_line(layers: list[tuple[Path, dict]]) -> Check:
