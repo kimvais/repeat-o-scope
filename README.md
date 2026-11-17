@@ -3,7 +3,7 @@
 Logs your Claude Code work, finds the prompts you keep repeating, and helps automate them away.
 
 Most Claude Code tokens go on wasted turns rather than on the work itself: a wrong guess, a retry, a re-read.
-[Why, and the set-up that cuts them](docs/why.md). repeat-o-scope finds those turns in your own transcripts.
+[Why, and the set-up that cuts them](https://github.com/kimvais/repeat-o-scope/blob/main/docs/why.md). repeat-o-scope finds those turns in your own transcripts.
 
 ## Install
 
@@ -16,6 +16,9 @@ repeat-o-scope install
 `~/.claude/settings.json`. It replaces an old `worklog.ps1` Stop hook, backs `settings.json` up once to
 `settings.json.repeat-o-scope.bak`, and refuses to touch a settings file it can't parse. Running it again
 changes nothing. `repeat-o-scope uninstall` removes both.
+
+The hook runs `repeat-o-scope-worklog` by name, so uv's tool directory must be on the `PATH` Claude Code sees.
+If `repeat-o-scope` isn't found after installing, run `uv tool update-shell` and open a new terminal.
 
 ## The skill
 
@@ -178,7 +181,7 @@ blocks python and pwsh from writing there. Per-session state lives in `~/.claude
 
 Transcripts don't record whether a turn went to extra usage. Claude Code passes the 5-hour and 7-day
 limits only to the status line (`rate_limits`, claude.ai subscriptions only), so
-[`statusline/statusline.ps1`](statusline/statusline.ps1) writes them to
+[`statusline/statusline.ps1`](https://github.com/kimvais/repeat-o-scope/blob/main/statusline/statusline.ps1) writes them to
 `~/.claude/hooks/worklog-state/<session_id>.rate-limits.json`, and the Stop hook copies them into the log:
 
 - `rate_limits`: the status line's latest copy, as Claude Code gave it (`used_percentage`, `resets_at`).
@@ -210,6 +213,17 @@ uv run pytest
 
 ## Releasing
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`, which tests, builds and publishes to PyPI through
-trusted publishing (no API token). The first release needs a trusted publisher on PyPI for this repo,
-workflow `release.yml` and environment `pypi`.
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It checks that the tag matches the version in
+`pyproject.toml`, runs the tests, builds, installs the wheel with `uv tool install` and runs
+`repeat-o-scope install` against a scratch directory, and only then publishes to PyPI through trusted publishing
+(no API token).
+
+```
+uv version --bump minor      # or patch; commit and merge that first
+git tag "v$(uv version --short)"
+git push origin "v$(uv version --short)"
+```
+
+Once, before the first release: add a pending trusted publisher at
+https://pypi.org/manage/account/publishing/ with project `repeat-o-scope`, owner `kimvais`, repository
+`repeat-o-scope`, workflow `release.yml` and environment `pypi`.
