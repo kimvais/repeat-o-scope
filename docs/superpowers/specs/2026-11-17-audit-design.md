@@ -22,7 +22,7 @@ and never `measure`, so fixes get ranked by how often something happens, not by 
    are what turn expired-cache and past-half-context waste, which has no text to group, into fixes.
 3. **Judge** (one example per group): is it real or noise, and for asks, which kind. It uses the first
    judge that is available, in this order:
-   1. Jev (`TYPESAFE_API_KEY`), in `audit`.
+   1. Jev (`TYPESAFE_API_KEY`, or `TYPESAFE_AI_API_KEY` as vainu-data names it), in `audit`.
    2. Gemini Decision 1 (`gemini-decision-1`, Gemini Decisions API, `GEMINI_API_KEY`), in `audit`.
    3. Clef, in `audit`: Workers AI,
       `POST https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/clef`
@@ -48,8 +48,6 @@ The old subcommands stay for debugging.
 
 - Gemini Decision 1: the `google-genai` `client.decisions.create` shape, checked against Google's docs,
   not secondary write-ups.
-- vainu-data names the Jev key `TYPESAFE_AI_API_KEY`; repeat-o-scope reads `TYPESAFE_API_KEY`.
-
 ## Out of scope
 
 `compare` (only the baseline is written now), a hosted dashboard, team rollups.
