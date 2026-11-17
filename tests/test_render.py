@@ -148,3 +148,19 @@ def test_measure_default_is_a_rich_table(transcripts):
 def test_measure_markdown_on_request(transcripts):
     text = cli.Scope(root=str(transcripts.root), format='markdown').measure()
     assert text.startswith('# Wasted turns'), text
+
+
+@pytest.mark.parametrize('name', ['measurement_table', 'measurement_markdown'])
+def test_measure_rows_sorted_by_tokens_descending(name):
+    from repeat_o_scope import render
+    from repeat_o_scope.waste import Tally
+
+    m = _measurement(
+        total=Tally(100, 1_000_000, 500_000.0),
+        refused_edit=Tally(10, 50_000, 25_000.0),
+        failed=Tally(5, 100_000, 50_000.0),
+        long_context=Tally(40, 10_000, 5_000.0),
+    )
+    text = getattr(render, name)(m, price=None)
+    order = ['Failed calls', 'Refused edits', 'Past half context', 'Re-reads']
+    assert [text.index(label) for label in order] == sorted(text.index(label) for label in order), text

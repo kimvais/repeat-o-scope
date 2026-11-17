@@ -114,7 +114,7 @@ def _measurement_rows(m: Measurement, *, price: float | None) -> list[list[str]]
     return [
         [_KIND_LABELS[kind], str(t.turns), f'{_share(t.weight, m.total):.1%}', f'{t.tokens:,}']
         + ([f'€{_eur(t, price=price):.2f}'] if price is not None else [])
-        for kind, t in m.waste.items()
+        for kind, t in sorted(m.waste.items(), key=lambda kv: -kv[1].tokens)
     ]
 
 
