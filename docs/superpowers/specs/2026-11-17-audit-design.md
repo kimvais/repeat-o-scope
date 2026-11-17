@@ -20,14 +20,21 @@ and never `measure`, so fixes get ranked by how often something happens, not by 
    checklist: effort level, `skillOverrides`, enabled skills, status line, scope and read-once rules,
    `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS`, no `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=25` on 200k models. These
    are what turn expired-cache and past-half-context waste, which has no text to group, into fixes.
-3. **Judge** (in `audit`, one example per group): is it real or noise, and for asks, which kind. It uses
-   the first judge that is available, in this order:
-   1. Jev (`TYPESAFE_API_KEY`)
-   2. Gemini Decision 1 (`gemini-decision-1`, Gemini Decisions API, `GEMINI_API_KEY`)
-   3. Clef (Cloudflare Workers AI; said to be wire-compatible with the Jev API)
-   4. Haiku 5.5 (`claude-haiku-5-5`, `ANTHROPIC_API_KEY`)
+3. **Judge** (one example per group): is it real or noise, and for asks, which kind. It uses the first
+   judge that is available, in this order:
+   1. Jev (`TYPESAFE_API_KEY`), in `audit`.
+   2. Gemini Decision 1 (`gemini-decision-1`, Gemini Decisions API, `GEMINI_API_KEY`), in `audit`.
+   3. Clef, in `audit`: Workers AI,
+      `POST https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/clef`
+      with `Bearer {CLOUDFLARE_API_KEY}`. The body is Jev's question format
+      (`{model, state, questions: {name: {type: choice|noul, instructions, criteria}}}`); answers come back
+      in `result.answers` with `choice`, `confidence` and `noul`, but no probabilities. Port of
+      `ClefClient` in vainu-data `python/libraries/financial_chunking/tools/sections.py`.
+   4. Haiku, in the skill: no API key. When `audit` reports the groups unjudged, the skill spawns a
+      subagent with `model: haiku` that answers the same questions over the JSON.
 
-   With none available, groups go out unjudged and the JSON says so. The judge used is in the output.
+   A judge is available when its env var is set, its client library imports, and a simple test call
+   returns a non-error status. The judge used is in the output.
 4. **Themes** (Claude, in the skill): merge groups across kinds that share one root cause, for example
    "Windows shell confusion" = denied Bash + failed quoting + retries.
 5. **Plan** (Claude, in the skill): at most 4 fixes, ranked by the share of usage each would save, each a
@@ -39,11 +46,9 @@ The old subcommands stay for debugging.
 
 ## Open
 
-- Clef: which endpoint and auth (Workers AI account id + token?), and does the Jev client just take a
-  different base URL?
 - Gemini Decision 1: the `google-genai` `client.decisions.create` shape, checked against Google's docs,
   not secondary write-ups.
-- What "available" means: the env var is set, or also a cheap reachability check.
+- vainu-data names the Jev key `TYPESAFE_AI_API_KEY`; repeat-o-scope reads `TYPESAFE_API_KEY`.
 
 ## Out of scope
 
