@@ -52,6 +52,35 @@ def test_one_call_split_over_entries_counts_once(transcripts):
     assert _measure(transcripts).total == Tally(turns=1, tokens=_TOKENS, weight=_WEIGHT)
 
 
+@pytest.mark.parametrize(('model', 'read_ratio'), [
+    (None, 0.1),
+    ('<synthetic>', 0.1),
+    ('claude-opus-4-8', 0.1),
+    ('claude-fable-5', 0.1),
+    ('claude-opus-5-5', 0.05),
+    ('claude-sonnet-5-5', 0.05),
+    ('claude-fable-5-2', 0.025),
+    ('claude-mythos-5-1', 0.025),
+])
+def test_cache_reads_weigh_by_model(transcripts, model, read_ratio):
+    entry = _call(transcripts, id='m1', blocks=[], usage={'cache_read_input_tokens': 1000})
+    entry['message']['model'] = model
+    transcripts.write([entry])
+    assert _measure(transcripts).total == Tally(turns=1, tokens=1000, weight=1000 * read_ratio)
+
+
+@pytest.mark.parametrize(('split', 'weight'), [
+    (None, 375.0),
+    ({'ephemeral_5m_input_tokens': 300, 'ephemeral_1h_input_tokens': 0}, 375.0),
+    ({'ephemeral_5m_input_tokens': 100, 'ephemeral_1h_input_tokens': 200}, 525.0),
+    ({'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 999}, 600.0),
+])
+def test_one_hour_cache_writes_weigh_double(transcripts, split, weight):
+    usage = {'cache_creation_input_tokens': 300} | ({'cache_creation': split} if split else {})
+    transcripts.write([_call(transcripts, id='m1', blocks=[], usage=usage)])
+    assert _measure(transcripts).total == Tally(turns=1, tokens=300, weight=weight)
+
+
 def test_tool_errors_are_charged_to_one_kind(transcripts):
     errors = [
         '<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>',
@@ -158,6 +187,72 @@ def test_call_charged_elsewhere_is_not_long_context(transcripts):
     ])
     m = _measure(transcripts)
     assert (m.waste['refused_edit'].turns, m.waste['long_context'].turns) == (1, 0), m
+
+
+def _timed(transcripts, id, *, minutes_ago, usage):
+    stamp = (transcripts.now - timedelta(minutes=minutes_ago)).isoformat()
+    entry = _call(transcripts, id=id, blocks=[], usage=usage, timestamp=stamp)
+    entry['message']['model'] = 'claude-opus-5-5'
+    return entry
+
+
+def _written(tokens, ttl='5m'):
+    return {'cache_creation_input_tokens': tokens, 'cache_creation': {f'ephemeral_{ttl}_input_tokens': tokens}}
+
+
+_WARM = {'cache_read_input_tokens': 90_000}
+
+
+def test_write_within_ttl_is_not_a_rebuild(transcripts):
+    transcripts.write([
+        _timed(transcripts, 'm1', minutes_ago=14, usage=_WARM),
+        _timed(transcripts, 'm2', minutes_ago=10, usage=_written(95_000)),
+    ])
+    assert _measure(transcripts).waste['cache_rebuild'] == Tally(0, 0, 0.0)
+
+
+def test_gap_without_cache_write_is_not_a_rebuild(transcripts):
+    transcripts.write([
+        _timed(transcripts, 'm1', minutes_ago=40, usage=_WARM),
+        _timed(transcripts, 'm2', minutes_ago=10, usage={'cache_read_input_tokens': 95_000}),
+    ])
+    assert _measure(transcripts).waste['cache_rebuild'] == Tally(0, 0, 0.0)
+
+
+@pytest.mark.parametrize(('ttl', 'gap', 'rebuilt', 'rate'), [
+    ('5m', 10, 1, 1.25 - 0.05),
+    ('1h', 10, 0, 0),
+    ('1h', 70, 1, 2.0 - 0.05),
+])
+def test_write_after_ttl_rebuilds_the_previous_context(transcripts, ttl, gap, rebuilt, rate):
+    transcripts.write([
+        _timed(transcripts, 'm1', minutes_ago=gap + 1, usage=_WARM),
+        _timed(transcripts, 'm2', minutes_ago=1, usage=_written(95_000, ttl)),
+    ])
+    t = _measure(transcripts).waste['cache_rebuild']
+    assert (t.turns, t.tokens) == (rebuilt, 90_000 * rebuilt), t
+    assert t.weight == pytest.approx(90_000 * rate), t
+
+
+def test_rebuild_is_not_long_context(transcripts):
+    transcripts.write([
+        _timed(transcripts, 'm1', minutes_ago=20, usage=_WARM),
+        _timed(transcripts, 'm2', minutes_ago=1, usage=_written(130_000)),
+    ])
+    m = _measure(transcripts)
+    assert (m.waste['cache_rebuild'].turns, m.waste['long_context'].turns) == (1, 0), m
+
+
+def test_rebuild_charged_elsewhere_counts_once(transcripts):
+    rebuild = _timed(transcripts, 'm2', minutes_ago=1, usage=_written(95_000))
+    rebuild['message']['content'] = [_tool_use('u1')]
+    transcripts.write([
+        _timed(transcripts, 'm1', minutes_ago=20, usage=_WARM),
+        rebuild,
+        _result(transcripts, 'u1', 'Exit code 1\nboom'),
+    ])
+    m = _measure(transcripts)
+    assert (m.waste['failed'].turns, m.waste['cache_rebuild'].turns) == (1, 0), m
 
 
 @pytest.mark.parametrize('error', [

@@ -68,14 +68,19 @@ How it works:
 - **Denied tools:** calls refused by you, a hook or the permission classifier, the same ones `fails` lists
   under Denied.
 - **Bare go-aheads:** the turn that answers a bare "yes" / "ship" / "go", the same replies `asks` counts.
+- **Expired cache:** the first call after a gap longer than the session's cache lifetime (5 minutes, or 1 hour
+  if most of its cache writes were 1-hour ones) writes the previous context to the cache again. It counts what
+  that rewrite cost above a warm cache read, on calls not charged to another kind.
 - **Past half context:** the context a call carried above half its window, on calls not charged to another kind.
 
 It prints a table for the terminal. `--format markdown` or `--format json` gives agents plain text. The
 headline is the wasted share of your usage. Raw tokens are a secondary column, and `--price 3.0` adds €,
 priced per million input tokens. Caveats:
 - Your usage limit isn't in the transcripts, so the share is the share of what you used, not of the limit.
-- Tokens are weighted by API price ratios: cache writes 1.25, cache reads 0.1 and output 5 times an input
-  token.
+- Tokens are weighted by the call's model's API price ratios to an input token: output 5, 5-minute cache
+  writes 1.25, 1-hour cache writes 2, and cache reads 0.05 on Opus 5.5 and Sonnet 5.5, 0.025 on Fable and
+  Mythos 5.1 and 5.2, and 0.1 on older models.
+- A session resumed under a new session id starts a new context, so its first rebuild isn't counted.
 - Cowork keeps its sessions apart. On Windows, point `--root` at them:
   `repeat-o-scope measure --root="$env:LOCALAPPDATA\Claude-Data\claude_<id>\local-agent-mode-sessions"`.
 - Transcripts don't say whether a session ran with a 200k or 1M context window. Each session gets the
