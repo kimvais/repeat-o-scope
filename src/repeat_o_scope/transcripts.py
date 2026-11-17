@@ -72,7 +72,7 @@ def iter_turn_ends(*, root: Path, since: datetime) -> Iterator[TurnEnd]:
     for e in iter_entries(root=root, since=since, subagents=False):
         session = e.get('sessionId')
         if e.get('type') == 'assistant' and not e.get('isSidechain'):
-            if line := _last_line(_text(e)):
+            if line := last_line(message_text(e)):
                 closing[session] = line
         elif (text := typed_text(e)) and not _BASH_INPUT.match(text) and session in closing:
             yield TurnEnd(closing=redact(closing.pop(session)), reply=redact(text))
@@ -89,10 +89,10 @@ def iter_tool_failures(*, root: Path, since: datetime) -> Iterator[ToolFailure]:
             if not isinstance(block, dict):
                 continue
             if block.get('type') == 'tool_use':
-                attempts[block.get('id')] = (block.get('name') or '?', _attempt(block.get('input')))
+                attempts[block.get('id')] = (block.get('name') or '?', attempt(block.get('input')))
             elif block.get('type') == 'tool_result' and block.get('is_error'):
-                tool, attempt = attempts.get(block.get('tool_use_id'), ('?', ''))
-                yield ToolFailure(tool=tool, attempt=redact(attempt), error=redact(error_line(block.get('content'))))
+                tool, tried = attempts.get(block.get('tool_use_id'), ('?', ''))
+                yield ToolFailure(tool=tool, attempt=redact(tried), error=redact(error_line(block.get('content'))))
 
 
 def is_go_ahead(reply: str) -> bool:
@@ -139,11 +139,12 @@ def typed_text(e: dict) -> str | None:
         or e.get('entrypoint') == 'sdk-cli'
     ):
         return None
-    text = _text(e).strip()
+    text = message_text(e).strip()
     return text if text and not _PLUMBING.match(text) else None
 
 
-def _text(e: dict) -> str:
+def message_text(e: dict) -> str:
+    """Returns the text blocks of an entry's message, joined."""
     content = (e.get('message') or {}).get('content')
     if isinstance(content, str):
         return content
@@ -152,12 +153,14 @@ def _text(e: dict) -> str:
     return ' '.join(b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text')
 
 
-def _last_line(text: str) -> str:
+def last_line(text: str) -> str:
+    """Returns the last line of `text` that isn't blank."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     return lines[-1] if lines else ''
 
 
-def _attempt(tool_input) -> str:
+def attempt(tool_input) -> str:
+    """Returns what a tool call tried to do: its command, path or query."""
     if not isinstance(tool_input, dict):
         return ''
     for key in _ATTEMPT_KEYS:
