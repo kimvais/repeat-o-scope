@@ -19,7 +19,29 @@ def test_skill_frontmatter():
 
 @pytest.mark.parametrize(
     'needle',
-    ['--format json', 'repeat-o-scope decline', 'Leave it', 'uv tool install repeat-o-scope', 'TYPESAFE_API_KEY', '--all'],
+    [
+        'repeat-o-scope audit --format json --jev',
+        'repeat-o-scope decline',
+        'Leave it',
+        'uv tool install repeat-o-scope',
+        '--all',
+        'model: "haiku"',
+        'disable-model-invocation: true',
+        'skillOverrides',
+        'The Bash tool does not exist here.',
+    ],
 )
 def test_skill_mentions_cli_surface(needle):
     assert needle in _SKILL
+
+
+@pytest.mark.parametrize('report', ['prompts', 'commands', 'asks', 'fails'])
+def test_skill_no_longer_runs_the_separate_reports(report):
+    assert f'repeat-o-scope {report} --format json' not in _SKILL
+
+
+def test_skill_asks_haiku_the_judges_questions():
+    from repeat_o_scope import judge
+
+    assert judge._REAL.instructions in _SKILL
+    assert all(description in _SKILL for description in judge._ASK.criteria.values())

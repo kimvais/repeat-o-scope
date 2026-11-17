@@ -19,11 +19,30 @@ changes nothing. `repeat-o-scope uninstall` removes both.
 
 ## The skill
 
-In Claude Code, run `/repeat-o-scope`, or ask what you keep repeating. The skill:
-1. Runs the four reports below as JSON.
-2. Picks at most four findings, the top one from each report first.
-3. Drafts a concrete fix for each: a shell function, a hook, a CLAUDE.md line, a script fix.
-4. Asks you once, applies only what you pick, and declines the rest so they don't come back.
+In Claude Code, run `/repeat-o-scope`, or ask where your usage goes or what you keep repeating. In one pass, the
+skill:
+1. Runs `repeat-o-scope audit --format json --jev`: what was wasted, on what, what it cost, and your settings.
+2. Judges the findings with a Haiku subagent if no judge key is set (see [Judges](#judges)).
+3. Merges findings with one root cause into themes, and picks at most four by share of usage.
+4. Drafts a concrete fix for each: a CLAUDE.md line, a setting, a hook, a shell function, a script fix.
+5. Asks you once, applies only what you pick, and declines the rest so they don't come back.
+
+## `audit`
+
+```
+repeat-o-scope audit      # measure + the findings behind the waste + repeats + doctor, as JSON
+```
+
+`audit` runs `measure`, groups the wasted calls of each kind by what they were about (the tool and its error,
+the re-read file, the closing line a bare go-ahead answered), and gives every group its turns, tokens and
+share of your usage, costliest first. Two alike wasted calls make a group; the rest of a kind is one group,
+so the shares add up to the measured waste. Expired caches and long contexts have nothing to group: the
+`doctor` checks, which `audit` includes, are what point at their fixes. `prompts` and `commands` findings come
+along with counts only.
+
+JSON is the default (`--format markdown` for people). `--jev` judges the groups, `decline` and `--all` work as
+for the reports, and every run writes the measurement to `<user data dir>/baseline/<date>.json` for a later
+before/after.
 
 ## Reports
 
@@ -115,16 +134,25 @@ writes anything and never prints settings values it doesn't check. Caveats:
 - Built-in and claude.ai skills aren't on disk, so the skill count is a lower bound.
 - It checks that a status line exists, not that it shows context % and usage %.
 
-### `--jev`
+## Judges
 
 Clustering can't tell a request for a go-ahead from a plain status line, or a real failure from a tool that
-only wrote to stderr. `--jev` hands those calls to [Jev](https://docs.typesafe.ai) (TypeSafe System One):
+only wrote to stderr. `--jev` hands one example per group to a judge:
 
 - `asks --jev` groups each closing line by kind: permission, choice, clarifying, review or report.
-- `fails --jev` asks about one example per group and leaves out groups that are only stderr noise.
+- `fails --jev` and `audit --jev` leave out failed-call groups that are only stderr noise.
 
-It sends those closing lines and tool errors, already redacted, to TypeSafe, and it costs money per call. It
-needs `TYPESAFE_API_KEY`:
+It uses the first judge whose key is set and that answers a test question without an error:
+
+| Judge | Keys |
+|---|---|
+| [Jev](https://docs.typesafe.ai) (TypeSafe System One) | `TYPESAFE_API_KEY` or `TYPESAFE_AI_API_KEY` |
+| Gemini Decision 1 (Gemini Decisions API) | `GEMINI_API_KEY` |
+| Clef (Cloudflare Workers AI) | `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_KEY` |
+
+The examples are already redacted, but they leave the machine, and each call costs money. With no judge,
+`asks --jev` and `fails --jev` stop with an error, and `audit --jev` reports `"judge": null`; the skill then
+asks a Haiku subagent the same questions.
 
 ```powershell
 $env:TYPESAFE_API_KEY = op item get TypeSafe --fields "api key" --reveal

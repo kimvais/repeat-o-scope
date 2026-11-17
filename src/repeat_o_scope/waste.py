@@ -3,16 +3,18 @@
 import collections
 import logging
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
 
 from repeat_o_scope import transcripts
+from repeat_o_scope.redaction import redact
 
 _LOGGER = logging.getLogger(__name__)
 
 KINDS = ('refused_edit', 'reread', 'failed', 'denied', 'bare_yes', 'cache_rebuild', 'long_context')
+NO_EVIDENCE = '(no text)'
 _REFUSED_EDIT = 'has not been read yet'
 _EDITS = frozenset({'Edit', 'Write', 'NotebookEdit'})
 _CONTEXT_WINDOWS = (200_000, 1_000_000)
@@ -43,10 +45,21 @@ class Tally:
 
 
 @dataclass(frozen=True)
+class Charge:
+    """One wasted call: its kind, what it was about (redacted), and its cost."""
+
+    kind: str
+    evidence: str
+    tally: Tally
+
+
+@dataclass(frozen=True)
 class Measurement:
     days: int
     total: Tally
     waste: dict[str, Tally]
+    # Calls charged to a kind with text behind it; expired caches and long contexts have none.
+    charges: list[Charge] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -60,11 +73,12 @@ class _Call:
 def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     """Returns the turns and tokens spent in the window, and those wasted per kind."""
     calls: dict[str, _Call] = {}
-    charges: dict[str, str] = {}
-    issuer: dict[str, str] = {}
+    # Call id -> (kind, evidence); the first charge wins.
+    charges: dict[str, tuple[str, str]] = {}
+    issuer: dict[str, tuple[str, str]] = {}
     seen: dict[tuple, set[tuple]] = collections.defaultdict(set)
-    asked: set[tuple] = set()
-    go_ahead: set[tuple] = set()
+    closing: dict[tuple, str] = {}
+    go_ahead: dict[tuple, str] = {}
     for e in transcripts.iter_entries(root=root, since=since, subagents=True):
         # Cowork's audit.jsonl uses the Agent SDK's `session_id`.
         context = (e.get('sessionId') or e.get('session_id'), e.get('agentId'))
@@ -72,8 +86,8 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
             # Compaction drops what was read, so reading it again is needed.
             seen[context].clear()
         # Condition copied from `iter_turn_ends`: a reply counts only after Claude said something in that session.
-        if (text := transcripts.typed_text(e)) and context in asked and transcripts.is_go_ahead(text):
-            go_ahead.add(context)
+        if (text := transcripts.typed_text(e)) and context in closing and transcripts.is_go_ahead(text):
+            go_ahead[context] = closing[context]
         message = e.get('message') or {}
         call_id, usage = message.get('id'), message.get('usage')
         is_call = e.get('type') == 'assistant' and isinstance(call_id, str) and isinstance(usage, dict)
@@ -85,19 +99,24 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
                 model=model if isinstance(model, str) else None,
                 usage=usage,
             ))
-            asked.add(context)
+            if line := transcripts.last_line(transcripts.message_text(e)):
+                closing[context] = line
+            else:
+                closing.setdefault(context, '')
             if context in go_ahead:
-                go_ahead.discard(context)
-                charges.setdefault(call_id, 'bare_yes')
+                charges.setdefault(call_id, ('bare_yes', go_ahead.pop(context)))
         for block in _blocks(message):
             if block.get('type') == 'tool_use' and is_call:
-                issuer[block.get('id')] = call_id
+                tool_input = block.get('input')
+                issuer[block.get('id')] = (call_id, f'{block.get("name") or "?"}: {transcripts.attempt(tool_input)}')
                 if _is_reread(block, seen=seen[context]):
-                    charges.setdefault(call_id, 'reread')
+                    path = tool_input.get('file_path') or tool_input.get('notebook_path')
+                    charges.setdefault(call_id, ('reread', path))
             elif block.get('type') == 'tool_result' and block.get('is_error'):
                 if (by := issuer.get(block.get('tool_use_id'))) is not None:
-                    charges.setdefault(by, _error_kind(transcripts.error_line(block.get('content'))))
-    waste = {kind: _tally([calls[c] for c, k in charges.items() if k == kind]) for kind in KINDS}
+                    error = transcripts.error_line(block.get('content'))
+                    charges.setdefault(by[0], (_error_kind(error), f'{by[1]} → {error or NO_EVIDENCE}'))
+    waste = {kind: _tally([calls[c] for c, (k, _) in charges.items() if k == kind]) for kind in KINDS}
     rebuilt = _rebuilds(calls, charged=charges.keys())
     waste['cache_rebuild'] = Tally(
         turns=len(rebuilt),
@@ -110,7 +129,12 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     )
     total = _tally(list(calls.values()))
     _LOGGER.info('Measured `%s` turns, `%s` wasted.', total.turns, sum(t.turns for t in waste.values()))
-    return Measurement(days=days, total=total, waste=waste)
+    charged = [
+        Charge(kind=charges[c][0], evidence=redact(charges[c][1] or NO_EVIDENCE), tally=_tally([call]))
+        for c, call in calls.items()
+        if c in charges
+    ]
+    return Measurement(days=days, total=total, waste=waste, charges=charged)
 
 
 def _blocks(message: dict) -> Iterator[dict]:

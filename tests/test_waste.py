@@ -276,6 +276,41 @@ def test_cowork_audit_sessions_are_separate_contexts(transcripts):
     assert _measure(transcripts).waste['reread'].turns == 0
 
 
+def test_charges_carry_evidence(transcripts):
+    transcripts.write([
+        _call(transcripts, id='m1', blocks=[_tool_use('u1', name='Edit', file_path='C:\\a.py')]),
+        _result(transcripts, 'u1', 'Exit code 1\nboom'),
+        _read(transcripts, 'm2'),
+        _read(transcripts, 'm3'),
+    ])
+    one = Tally(turns=1, tokens=_TOKENS, weight=_WEIGHT)
+    assert _measure(transcripts).charges == [
+        waste.Charge(kind='failed', evidence='Edit: C:\\a.py → boom', tally=one),
+        waste.Charge(kind='reread', evidence='C:\\a.py', tally=one),
+    ]
+
+
+def test_go_ahead_charge_quotes_the_closing_line(transcripts):
+    transcripts.write(_ask_and_reply(transcripts, 'yes'))
+    assert [(c.kind, c.evidence) for c in _measure(transcripts).charges] == [('bare_yes', 'Shall I commit?')]
+
+
+def test_empty_error_is_still_charged(transcripts):
+    transcripts.write([_call(transcripts, id='m1', blocks=[_tool_use('u1')]), _result(transcripts, 'u1', '')])
+    assert [(c.kind, c.evidence) for c in _measure(transcripts).charges] == [
+        ('failed', f'Edit: C:\\a.py → {waste.NO_EVIDENCE}'),
+    ]
+
+
+def test_evidence_is_redacted(transcripts):
+    command = 'curl -H "Authorization: Bearer sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"'
+    transcripts.write([
+        _call(transcripts, id='m1', blocks=[_tool_use('u1', name='PowerShell', command=command)]),
+        _result(transcripts, 'u1', 'Exit code 1\nboom'),
+    ])
+    assert 'sk-ant-api03' not in _measure(transcripts).charges[0].evidence
+
+
 def test_call_with_two_failures_is_charged_once(transcripts):
     transcripts.write([
         _call(transcripts, id='m1', blocks=[_tool_use('u1'), _tool_use('u2')]),
@@ -283,3 +318,8 @@ def test_call_with_two_failures_is_charged_once(transcripts):
         _result(transcripts, 'u2', 'Exit code 1\nboom'),
     ])
     assert _measure(transcripts).waste['failed'].turns == 1
+
+
+def test_notebook_reread_does_not_crash(transcripts):
+    transcripts.write([_read(transcripts, f'm{i}', notebook_path='C:\\n.ipynb') for i in (1, 2)])
+    assert [(c.kind, c.evidence) for c in _measure(transcripts).charges] == [('reread', 'C:\\n.ipynb')]

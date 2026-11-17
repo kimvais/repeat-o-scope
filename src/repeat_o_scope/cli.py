@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, declined, doctor, findings, install, judge, render, transcripts, waste
+from repeat_o_scope import audit, cluster, declined, doctor, findings, install, judge, judges, render, transcripts, waste
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,6 +82,36 @@ class Scope:
             raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
         return renderers[self._format](doctor.diagnose(claude_dir=self._claude_dir, project_dir=Path.cwd()))
 
+    def audit(self) -> str:
+        """Waste, what it was spent on and what it cost, repeats and settings in one pass, for the skill.
+
+        Writes the measurement as today's baseline. `--jev` judges the findings with the first available judge.
+        """
+        # JSON by default: the skill reads this, a person reads `measure` or `--format markdown`.
+        renderers = {None: render.audit_json, 'json': render.audit_json, 'markdown': self._audit_markdown}
+        if self._format not in renderers:
+            raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
+        a = audit.run(
+            claude_dir=self._claude_dir,
+            days=self._days,
+            judge=self._jev,
+            project_dir=Path.cwd(),
+            root=self._root,
+            since=self._since,
+        )
+        report = Report(name='audit', days=self._days, jev=self._jev, totals={}, findings=a.findings)
+        declined.remember_last(data_dir=self._data_dir, report=report)
+        if not self._all:
+            a = dataclasses.replace(a, findings=declined.drop_declined(data_dir=self._data_dir, findings=a.findings))
+        baseline = self._data_dir / 'baseline' / f'{datetime.now(timezone.utc).date().isoformat()}.json'
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_text(render.measurement_json(a.measurement, price=None), encoding='utf-8')
+        _LOGGER.info('Wrote the baseline to `%s`.', baseline)
+        return renderers[self._format](a)
+
+    def _audit_markdown(self, a: audit.Audit) -> str:
+        return render.audit_markdown(a, top=self._top)
+
     def install(self) -> str:
         """Installs the repeat-o-scope skill and the worklog Stop hook into ~/.claude."""
         return '\n'.join(install.install(claude_dir=self._claude_dir)) or 'Already installed.'
@@ -121,7 +151,7 @@ class Scope:
         closings = collections.Counter(e.closing for e in wasted)
         if self._jev and closings:
             distinct = list(closings)
-            kind_of = dict(zip(distinct, judge.kinds_of_asks(distinct)))
+            kind_of = dict(zip(distinct, judge.kinds_of_asks(distinct, judge=_open_judge())))
             groups = collections.defaultdict(collections.Counter)
             for c, n in closings.items():
                 groups[kind_of[c]][c] = n
@@ -158,14 +188,16 @@ class Scope:
         for f in transcripts.iter_tool_failures(root=self._root, since=self._since):
             key = cluster.normalise(f'{f.tool}: {f.error}')
             (denied if transcripts.is_denial(f.error) else failed)[key].append(f)
-        failure_clusters, failure_noise = cluster.rank(_repeated(failed), min_size=_MIN_SIZE)
+        failure_clusters, failure_noise = cluster.rank(audit.repeated(failed), min_size=_MIN_SIZE)
         note, label = '', None
         if self._jev and failure_clusters:
             # One example per group: the first failure behind its most frequent variant.
-            real = judge.real_failures([failed[c.variants[0][0]][0] for c in failure_clusters])
-            note = f'Jev judged {sum(not r for r in real)} group(s) as noise on stderr and left them out.'
+            judged_by = _open_judge()
+            firsts = [failed[c.variants[0][0]][0] for c in failure_clusters]
+            real = judge.real_failures([f'{f.tool}: {f.attempt} → {f.error}' for f in firsts], judge=judged_by)
+            note = f'{judged_by.name} judged {sum(not r for r in real)} group(s) as noise on stderr and left them out.'
             failure_clusters, label = [c for c, r in zip(failure_clusters, real) if r], 'real'
-        denial_clusters, denial_noise = cluster.rank(_repeated(denied), min_size=_MIN_SIZE)
+        denial_clusters, denial_noise = cluster.rank(audit.repeated(denied), min_size=_MIN_SIZE)
         originals = {
             k: [f'{f.tool}: {f.attempt} → {f.error}' for f in fs] for k, fs in (failed | denied).items()
         }
@@ -190,23 +222,13 @@ class Scope:
         )
 
     def _clustered(self, name: str, kind: str, texts) -> Report:
-        originals = collections.defaultdict(list)
-        for text in texts:
-            originals[cluster.normalise(text)].append(text)
-        clusters, noise = cluster.rank(_repeated(originals), min_size=_MIN_SIZE)
-        _LOGGER.info('Ranked `%s` %s into `%s` groups.', sum(map(len, originals.values())), name, len(clusters))
-        return Report(
-            name=name,
-            days=self._days,
-            jev=self._jev,
-            totals={'items': sum(map(len, originals.values())), 'groups': len(clusters), 'one_offs': noise},
-            findings=[findings.from_cluster(report=name, kind=kind, cluster=c, originals=originals) for c in clusters],
-        )
+        return audit.clustered(name, kind, texts, days=self._days, jev=self._jev)
 
 
-def _repeated(groups: dict[str, list]) -> list[str]:
-    """Returns each key once per item behind it, the shape `cluster.rank` counts."""
-    return [k for k, items in groups.items() for _ in items]
+def _open_judge() -> judges.Judge:
+    if (opened := judges.open_judge()) is None:
+        raise findings.RepeatOScopeError('No judge available: set a Jev, Gemini or Cloudflare key!')
+    return opened
 
 
 def main() -> None:

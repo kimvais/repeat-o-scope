@@ -18,6 +18,7 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     "fire>=0.7",
+    "httpx2>=2.16",
     "model2vec>=0.4",
     "platformdirs>=4",
     "rich>=13",
