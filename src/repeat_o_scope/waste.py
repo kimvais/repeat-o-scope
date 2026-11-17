@@ -79,7 +79,7 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
         windows=_windows(calls=calls, call_context=call_context),
     )
     total = _tally(list(calls.values()))
-    _LOGGER.info('Measured `%s` turns, `%s` wasted.', total.turns, len(charges))
+    _LOGGER.info('Measured `%s` turns, `%s` wasted.', total.turns, sum(t.turns for t in waste.values()))
     return Measurement(days=days, total=total, waste=waste)
 
 

@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, declined, findings, install, judge, render, transcripts
+from repeat_o_scope import cluster, declined, findings, install, judge, render, transcripts, waste
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ class Scope:
         days: int = 30,
         format: str = 'markdown',
         jev: bool = False,
+        price: float | None = None,
         root: str | None = None,
         top: int = 20,
     ):
@@ -41,6 +42,7 @@ class Scope:
         self._days = days
         self._format = format
         self._jev = jev
+        self._price = price
         self._top = top
 
     def prompts(self) -> str:
@@ -58,6 +60,14 @@ class Scope:
     def fails(self) -> str:
         """Tool calls that keep failing, with denials apart."""
         return self._out(self._report_fails)
+
+    def measure(self) -> str:
+        """Turns wasted per kind, and their share of your usage. `--price` adds € per million input tokens."""
+        renderers = {'markdown': render.measurement_markdown, 'json': render.measurement_json}
+        if self._format not in renderers:
+            raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
+        m = waste.measure(days=self._days, root=self._root, since=self._since)
+        return renderers[self._format](m, price=self._price)
 
     def install(self) -> str:
         """Installs the repeat-o-scope skill and the worklog Stop hook into ~/.claude."""

@@ -78,3 +78,49 @@ def test_json_utf8_on_legacy_console(transcripts, tmp_path):
     )
     assert run.returncode == 0, run.stderr.decode('utf-8', 'replace')
     assert 'tämä → ✓' in run.stdout.decode('utf-8')
+
+
+def _measurement(**waste):
+    from repeat_o_scope.waste import KINDS, Measurement, Tally
+
+    zero = Tally(0, 0, 0.0)
+    total = waste.pop('total', zero)
+    return Measurement(days=30, total=total, waste={k: waste.get(k, zero) for k in KINDS})
+
+
+def test_measure_unknown_format_raises(transcripts):
+    with pytest.raises(findings.RepeatOScopeError, match='xml'):
+        cli.Scope(root=str(transcripts.root), format='xml').measure()
+
+
+def test_measure_with_no_transcripts():
+    from repeat_o_scope import render
+
+    m = _measurement()
+    assert '0 of 0 turns wasted' in render.measurement_markdown(m, price=None)
+    doc = json.loads(render.measurement_json(m, price=None))
+    assert {k: v['share'] for k, v in doc['waste'].items()} == dict.fromkeys(
+        ['refused_edit', 'reread', 'failed', 'denied', 'bare_yes', 'long_context'], 0
+    ), doc
+
+
+def test_measure_has_no_euros_without_price():
+    from repeat_o_scope import render
+    from repeat_o_scope.waste import Tally
+
+    m = _measurement(total=Tally(100, 1_000_000, 500_000.0), refused_edit=Tally(10, 50_000, 25_000.0))
+    for text in (render.measurement_markdown(m, price=None), render.measurement_json(m, price=None)):
+        assert '€' not in text and 'eur' not in text, text
+
+
+def test_measure_markdown():
+    from repeat_o_scope import render
+    from repeat_o_scope.waste import Tally
+
+    m = _measurement(total=Tally(100, 1_000_000, 500_000.0), refused_edit=Tally(10, 50_000, 25_000.0))
+    text = render.measurement_markdown(m, price=None)
+    assert text.startswith('# Wasted turns'), text
+    assert '_Last 30 days: 10 of 100 turns wasted, 5.0% of your usage._' in text, text
+    assert '| Refused edits | 10 | 5.0% | 50,000 |' in text, text
+    assert '| Refused edits | 10 | 5.0% | 50,000 | €0.10 |' in render.measurement_markdown(m, price=4.0)
+    assert json.loads(render.measurement_json(m, price=4.0))['waste']['refused_edit']['eur'] == 0.1

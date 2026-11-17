@@ -32,6 +32,7 @@ repeat-o-scope prompts    # prompts you keep typing
 repeat-o-scope commands   # `!` shell commands you keep running by hand
 repeat-o-scope asks       # Claude turn endings you answered with a bare "ship" / "go" / "yes"
 repeat-o-scope fails      # tool calls that keep failing, with denials listed apart
+repeat-o-scope measure    # turns wasted per kind, and their share of your usage
 ```
 
 Each report reads the transcripts under `~/.claude/projects` from the last 30 days (`--days`), and prints
@@ -55,6 +56,27 @@ How it works:
 - They are embedded locally with `model2vec` (`minishlab/potion-base-8M`, about 30 MB, downloaded once) and
   grouped with scikit-learn's HDBSCAN. Nothing leaves the machine unless you pass `--jev`.
 - A group needs at least 4 occurrences.
+
+### `measure`
+
+`measure` counts turns, where a turn is one API call, and charges each wasted turn to one kind:
+
+- **Refused edits:** an Edit or Write of a file Claude had not read yet.
+- **Re-reads:** reading the same file range again in one context. A read after an edit of that file, or after
+  compaction, doesn't count.
+- **Failed calls:** any other tool error.
+- **Denied tools:** calls refused by you, a hook or the permission classifier, the same ones `fails` lists
+  under Denied.
+- **Bare go-aheads:** the turn that answers a bare "yes" / "ship" / "go", the same replies `asks` counts.
+- **Past half context:** the context a call carried above half its window, on calls not charged to another kind.
+
+The headline is the wasted share of your usage. Raw tokens are a secondary column, and `--price 3.0` adds €,
+priced per million input tokens. Caveats:
+- Your usage limit isn't in the transcripts, so the share is the share of what you used, not of the limit.
+- Tokens are weighted by API price ratios: cache writes 1.25, cache reads 0.1 and output 5 times an input
+  token.
+- Transcripts don't say whether a session ran with a 200k or 1M context window. Each session gets the
+  smallest one that fits its largest call.
 
 ### `--jev`
 
