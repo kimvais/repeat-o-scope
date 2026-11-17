@@ -48,7 +48,8 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     asked: set[tuple] = set()
     go_ahead: set[tuple] = set()
     for e in transcripts.iter_entries(root=root, since=since, subagents=True):
-        context = (e.get('sessionId'), e.get('agentId'))
+        # Cowork's audit.jsonl uses the Agent SDK's `session_id`.
+        context = (e.get('sessionId') or e.get('session_id'), e.get('agentId'))
         if e.get('isCompactSummary'):
             # Compaction drops what was read, so reading it again is needed.
             seen[context].clear()

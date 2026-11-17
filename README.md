@@ -75,6 +75,8 @@ priced per million input tokens. Caveats:
 - Your usage limit isn't in the transcripts, so the share is the share of what you used, not of the limit.
 - Tokens are weighted by API price ratios: cache writes 1.25, cache reads 0.1 and output 5 times an input
   token.
+- Cowork keeps its sessions apart. On Windows, point `--root` at them:
+  `repeat-o-scope measure --root="$env:LOCALAPPDATA\Claude-Data\claude_<id>\local-agent-mode-sessions"`.
 - Transcripts don't say whether a session ran with a 200k or 1M context window. Each session gets the
   smallest one that fits its largest call.
 

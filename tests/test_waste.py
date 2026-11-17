@@ -170,6 +170,17 @@ def test_unavailable_or_denied_tool_is_denied(transcripts, error):
     assert (m.waste['denied'].turns, m.waste['failed'].turns) == (1, 0), m
 
 
+def test_cowork_audit_sessions_are_separate_contexts(transcripts):
+    """Cowork's audit.jsonl names the session `session_id`, not `sessionId`."""
+    entries = []
+    for session in ('a', 'b'):
+        entry = _read(transcripts, f'm-{session}')
+        del entry['sessionId']
+        entries.append(entry | {'session_id': session})
+    transcripts.write(entries, name='audit')
+    assert _measure(transcripts).waste['reread'].turns == 0
+
+
 def test_call_with_two_failures_is_charged_once(transcripts):
     transcripts.write([
         _call(transcripts, id='m1', blocks=[_tool_use('u1'), _tool_use('u2')]),
