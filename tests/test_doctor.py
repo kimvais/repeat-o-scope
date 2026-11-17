@@ -242,6 +242,49 @@ def test_non_numeric_env_value_is_not_printed(dirs, no_compact_env):
     assert 'sekrit' not in repr(checks), checks
 
 
+@pytest.mark.parametrize('model_settings', [None, ['x'], 'medium', {'claude-opus-5-5': None}])
+def test_odd_model_settings_do_not_crash(dirs, model_settings):
+    _settings(dirs[0] / 'settings.json', {'modelSettings': model_settings})
+    assert _checks(dirs)['effort'].found == 'not set'
+
+
+def test_non_utf8_settings_raise(dirs):
+    (dirs[0] / 'settings.json').write_bytes(b'{"model": "\xff"}')
+    with pytest.raises(RepeatOScopeError, match='settings.json'):
+        doctor.diagnose(claude_dir=dirs[0], project_dir=dirs[1])
+
+
+@pytest.mark.parametrize(
+    'plugins',
+    [
+        [],
+        {'bad@m': [{'scope': 'user', 'installPath': None}]},
+        {'bad@m': [{'scope': 'user'}]},
+        {'bad@m': ['x']},
+    ],
+)
+def test_odd_installed_plugins_skip_only_the_bad_entry(dirs, plugins):
+    claude_dir = dirs[0]
+    good = claude_dir / 'plugins' / 'cache' / 'good'
+    _skill(good / 'skills', 'one')
+    installed = {'good@m': [{'scope': 'user', 'installPath': str(good)}]}
+    if isinstance(plugins, dict):
+        installed |= plugins
+        doc = {'version': 2, 'plugins': installed}
+    else:
+        doc = {'version': 2, 'plugins': plugins}
+    _settings(claude_dir / 'plugins' / 'installed_plugins.json', doc)
+    _settings(claude_dir / 'settings.json', {'enabledPlugins': {'good@m': True, 'bad@m': True}})
+    expected = 'at least 0 enabled' if isinstance(plugins, list) else 'at least 1 enabled'
+    assert _checks(dirs)['skills'].found == expected
+
+
+@pytest.mark.parametrize(('pct', 'ok'), [('25', False), ('49', False), ('50', True), ('90', True), ('x', False)])
+def test_autocompact_override_on_200k_fails_only_when_low(dirs, no_compact_env, pct, ok):
+    _settings(dirs[0] / 'settings.json', {'model': 'opus', 'env': {_PCT: pct}})
+    assert _checks(dirs)['autocompact_override'].ok is ok
+
+
 def test_local_settings_override_user(dirs):
     _settings(dirs[0] / 'settings.json', {'modelSettings': {'claude-opus-5-5': {'effortLevel': 'medium'}}})
     local = _settings(dirs[1] / '.claude' / 'settings.local.json', {'effortLevel': 'high'})

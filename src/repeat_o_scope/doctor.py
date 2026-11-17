@@ -25,6 +25,8 @@ CHECKS = (
 _IDLE_COMPACT = 'CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS'
 _IDLE_COMPACT_MAX = 100_000
 _AUTOCOMPACT_PCT = 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'
+# On 200k, 25 fires at 45,000 and thrashes; 50 fires at 100,000, well above what a summary leaves.
+_AUTOCOMPACT_MIN_PCT = 50
 _LOW_EFFORT = {'low', 'medium'}
 # docs/why.md gives no number; above this, skill descriptions are a noticeable fixed cost per turn.
 _MAX_SKILLS = 30
@@ -85,9 +87,9 @@ def _layers(*, claude_dir: Path, project_dir: Path) -> list[tuple[Path, dict]]:
 
 def _effort(layers: list[tuple[Path, dict]]) -> Check:
     for path, settings in layers:
-        levels = [settings.get('effortLevel')] + [
-            m.get('effortLevel') for m in settings.get('modelSettings', {}).values() if isinstance(m, dict)
-        ]
+        per_model = settings.get('modelSettings')
+        per_model = per_model.values() if isinstance(per_model, dict) else []
+        levels = [settings.get('effortLevel')] + [m.get('effortLevel') for m in per_model if isinstance(m, dict)]
         levels = sorted({str(level) for level in levels if level})
         if levels:
             ok = set(levels) <= _LOW_EFFORT
@@ -146,7 +148,7 @@ def _autocompact_override(layers: list[tuple[Path, dict]]) -> Check:
     value, source = env
     model = next((s['model'] for _, s in layers if isinstance(s.get('model'), str)), '')
     # `[1m]` is how Claude Code names a 1M-context model; anything else is taken as 200k.
-    ok = model.lower().endswith('[1m]')
+    ok = model.lower().endswith('[1m]') or (value is not None and value >= _AUTOCOMPACT_MIN_PCT)
     fix = (
         f'Remove {_AUTOCOMPACT_PCT}: on a 200k-context model it compacts below what a summary leaves, '
         'and the session thrashes.'
@@ -177,12 +179,20 @@ def _install_paths(claude_dir: Path) -> dict[str, str]:
     """Returns each installed plugin's `installPath`; none when the file is missing or unreadable."""
     path = claude_dir / 'plugins' / 'installed_plugins.json'
     try:
-        plugins = json.loads(path.read_text(encoding='utf-8-sig'))['plugins']
-        return {key: entries[0]['installPath'] for key, entries in plugins.items() if entries}
-    except (OSError, ValueError, KeyError, TypeError, IndexError) as err:
+        plugins = json.loads(path.read_text(encoding='utf-8-sig')).get('plugins')
+    except (OSError, ValueError, AttributeError) as err:
         # Plugins are optional: a missing or odd file means no plugin skills, not a broken audit.
         _LOGGER.debug('No plugin skills from `%s`: %s', path, err)
         return {}
+    if not isinstance(plugins, dict):
+        return {}
+    paths = {}
+    for key, entries in plugins.items():
+        # One odd entry loses only that plugin's skills.
+        entry = entries[0] if isinstance(entries, list) and entries else None
+        if isinstance(entry, dict) and isinstance(entry.get('installPath'), str):
+            paths[key] = entry['installPath']
+    return paths
 
 
 def _merged(layers: list[tuple[Path, dict]], *, key: str) -> dict:

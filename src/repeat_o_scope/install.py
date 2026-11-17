@@ -87,7 +87,7 @@ def load_settings(path: Path) -> dict:
         return {}
     try:
         settings = json.loads(path.read_text(encoding='utf-8-sig'))
-    except json.JSONDecodeError as err:
+    except (json.JSONDecodeError, UnicodeDecodeError) as err:
         # Never rewrite a file we cannot parse: the user's other settings would be lost.
         raise RepeatOScopeError(f'Cannot parse {path}, leaving it untouched: {err}!') from err
     if not isinstance(settings, dict):

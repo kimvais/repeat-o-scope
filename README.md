@@ -102,8 +102,8 @@ repeat-o-scope doctor     # your settings and CLAUDE.md against the checklist in
   has them, matched by their key phrases.
 - **Idle compact:** `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` is at most 100000, so idle compact runs on ordinary
   sessions during long breaks with the terminal open.
-- **Auto-compact override:** no `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, unless the model is a 1M one (`opus[1m]`).
-  On 200k it compacts below what a summary leaves.
+- **Auto-compact override:** no `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` below 50, unless the model is a 1M one
+  (`opus[1m]`). On 200k, 25 compacts at 45,000 tokens, below what a summary leaves.
 
 The two compaction checks follow
 [claude-code-usage-analysis](https://github.com/inevolin/claude-code-usage-analysis). They read `env` in
