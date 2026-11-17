@@ -52,6 +52,35 @@ def test_one_call_split_over_entries_counts_once(transcripts):
     assert _measure(transcripts).total == Tally(turns=1, tokens=_TOKENS, weight=_WEIGHT)
 
 
+@pytest.mark.parametrize(('model', 'read_ratio'), [
+    (None, 0.1),
+    ('<synthetic>', 0.1),
+    ('claude-opus-4-8', 0.1),
+    ('claude-fable-5', 0.1),
+    ('claude-opus-5-5', 0.05),
+    ('claude-sonnet-5-5', 0.05),
+    ('claude-fable-5-2', 0.025),
+    ('claude-mythos-5-1', 0.025),
+])
+def test_cache_reads_weigh_by_model(transcripts, model, read_ratio):
+    entry = _call(transcripts, id='m1', blocks=[], usage={'cache_read_input_tokens': 1000})
+    entry['message']['model'] = model
+    transcripts.write([entry])
+    assert _measure(transcripts).total == Tally(turns=1, tokens=1000, weight=1000 * read_ratio)
+
+
+@pytest.mark.parametrize(('split', 'weight'), [
+    (None, 375.0),
+    ({'ephemeral_5m_input_tokens': 300, 'ephemeral_1h_input_tokens': 0}, 375.0),
+    ({'ephemeral_5m_input_tokens': 100, 'ephemeral_1h_input_tokens': 200}, 525.0),
+    ({'ephemeral_5m_input_tokens': 0, 'ephemeral_1h_input_tokens': 999}, 600.0),
+])
+def test_one_hour_cache_writes_weigh_double(transcripts, split, weight):
+    usage = {'cache_creation_input_tokens': 300} | ({'cache_creation': split} if split else {})
+    transcripts.write([_call(transcripts, id='m1', blocks=[], usage=usage)])
+    assert _measure(transcripts).total == Tally(turns=1, tokens=300, weight=weight)
+
+
 def test_tool_errors_are_charged_to_one_kind(transcripts):
     errors = [
         '<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>',

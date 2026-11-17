@@ -15,13 +15,21 @@ KINDS = ('refused_edit', 'reread', 'failed', 'denied', 'bare_yes', 'long_context
 _REFUSED_EDIT = 'has not been read yet'
 _EDITS = frozenset({'Edit', 'Write', 'NotebookEdit'})
 _CONTEXT_WINDOWS = (200_000, 1_000_000)
+_TOKEN_KEYS = ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens')
 # API price ratios against an input token: the best public proxy for how much of a usage limit a call takes.
-_WEIGHTS = {
-    'input_tokens': 1.0,
-    'cache_creation_input_tokens': 1.25,
-    'cache_read_input_tokens': 0.1,
-    'output_tokens': 5.0,
+_OUTPUT = 5.0
+_WRITE_5M = 1.25
+_WRITE_1H = 2.0
+# Cache reads got cheaper relative to input with the newer models; matched as a prefix of `message.model`.
+_CACHE_READS = {
+    'claude-fable-5-1': 0.025,
+    'claude-fable-5-2': 0.025,
+    'claude-mythos-5-1': 0.025,
+    'claude-mythos-5-2': 0.025,
+    'claude-opus-5-5': 0.05,
+    'claude-sonnet-5-5': 0.05,
 }
+_CACHE_READ = 0.1
 
 
 @dataclass(frozen=True)
@@ -38,13 +46,19 @@ class Measurement:
     waste: dict[str, Tally]
 
 
+@dataclass(frozen=True)
+class _Call:
+    context: tuple
+    model: str | None
+    usage: dict
+
+
 def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     """Returns the turns and tokens spent in the window, and those wasted per kind."""
-    calls: dict[str, dict] = {}
+    calls: dict[str, _Call] = {}
     charges: dict[str, str] = {}
     issuer: dict[str, str] = {}
     seen: dict[tuple, set[tuple]] = collections.defaultdict(set)
-    call_context: dict[str, tuple] = {}
     asked: set[tuple] = set()
     go_ahead: set[tuple] = set()
     for e in transcripts.iter_entries(root=root, since=since, subagents=True):
@@ -60,8 +74,8 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
         call_id, usage = message.get('id'), message.get('usage')
         is_call = e.get('type') == 'assistant' and isinstance(call_id, str) and isinstance(usage, dict)
         if is_call:
-            calls.setdefault(call_id, usage)
-            call_context.setdefault(call_id, context)
+            model = message.get('model')
+            calls.setdefault(call_id, _Call(context=context, model=model if isinstance(model, str) else None, usage=usage))
             asked.add(context)
             if context in go_ahead:
                 go_ahead.discard(context)
@@ -76,8 +90,8 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
                     charges.setdefault(by, _error_kind(transcripts.error_line(block.get('content'))))
     waste = {kind: _tally([calls[c] for c, k in charges.items() if k == kind]) for kind in KINDS}
     waste['long_context'] = _long_context(
-        {c: (call_context[c], u) for c, u in calls.items() if c not in charges},
-        windows=_windows(calls=calls, call_context=call_context),
+        [call for c, call in calls.items() if c not in charges],
+        windows=_windows(calls.values()),
     )
     total = _tally(list(calls.values()))
     _LOGGER.info('Measured `%s` turns, `%s` wasted.', total.turns, sum(t.turns for t in waste.values()))
@@ -108,21 +122,21 @@ def _is_reread(block: dict, *, seen: set[tuple]) -> bool:
     return False
 
 
-def _windows(*, call_context: dict[str, tuple], calls: dict[str, dict]) -> dict[tuple, int]:
+def _windows(calls) -> dict[tuple, int]:
     """Returns each context's window: the smallest that fits its largest call, since transcripts don't say."""
     largest = collections.defaultdict(int)
-    for call_id, usage in calls.items():
-        largest[call_context[call_id]] = max(largest[call_context[call_id]], _context(usage))
+    for call in calls:
+        largest[call.context] = max(largest[call.context], _context(call.usage))
     return {c: next((w for w in _CONTEXT_WINDOWS if w >= n), _CONTEXT_WINDOWS[-1]) for c, n in largest.items()}
 
 
-def _long_context(uncharged: dict[str, tuple[tuple, dict]], *, windows: dict[tuple, int]) -> Tally:
+def _long_context(uncharged: list[_Call], *, windows: dict[tuple, int]) -> Tally:
     """Returns the tally of the context each call carried above half its window."""
     turns, tokens, weight = 0, 0, 0.0
-    for context, usage in uncharged.values():
-        if (excess := _context(usage) - windows[context] // 2) > 0:
+    for call in uncharged:
+        if (excess := _context(call.usage) - windows[call.context] // 2) > 0:
             turns, tokens = turns + 1, tokens + excess
-            weight += _weight(usage) * excess / _context(usage)
+            weight += _weight(call) * excess / _context(call.usage)
     return Tally(turns=turns, tokens=tokens, weight=weight)
 
 
@@ -136,17 +150,35 @@ def _error_kind(error: str) -> str:
     return 'refused_edit' if _REFUSED_EDIT in error else 'failed'
 
 
-def _tally(usages: list[dict]) -> Tally:
-    return Tally(turns=len(usages), tokens=sum(map(_tokens, usages)), weight=sum(map(_weight, usages)))
+def _tally(calls: list[_Call]) -> Tally:
+    return Tally(
+        turns=len(calls),
+        tokens=sum(_count(c.usage, key) for c in calls for key in _TOKEN_KEYS),
+        weight=sum(map(_weight, calls)),
+    )
 
 
-def _tokens(usage: dict) -> int:
-    return sum(_count(usage, key) for key in _WEIGHTS)
-
-
-def _weight(usage: dict) -> float:
+def _weight(call: _Call) -> float:
     """Returns how much of a usage limit a call takes, in input-token equivalents."""
-    return sum(_count(usage, key) * w for key, w in _WEIGHTS.items())
+    usage = call.usage
+    return (
+        _count(usage, 'input_tokens')
+        + _write_weight(usage)
+        + _count(usage, 'cache_read_input_tokens') * _read_ratio(call.model)
+        + _count(usage, 'output_tokens') * _OUTPUT
+    )
+
+
+def _write_weight(usage: dict) -> float:
+    """Returns the weight of a call's cache writes; a write without the TTL split counts as 5-minute."""
+    split = usage.get('cache_creation') if isinstance(usage.get('cache_creation'), dict) else {}
+    written = _count(usage, 'cache_creation_input_tokens')
+    one_hour = min(_count(split, 'ephemeral_1h_input_tokens'), written)
+    return one_hour * _WRITE_1H + (written - one_hour) * _WRITE_5M
+
+
+def _read_ratio(model: str | None) -> float:
+    return next((r for prefix, r in _CACHE_READS.items() if model and model.startswith(prefix)), _CACHE_READ)
 
 
 def _count(usage: dict, key: str) -> int:
