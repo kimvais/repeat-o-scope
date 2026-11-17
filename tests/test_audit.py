@@ -1,8 +1,11 @@
+import dataclasses
+import json
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
-from repeat_o_scope import audit, doctor, judges
+from repeat_o_scope import audit, cli, doctor, judges
 from repeat_o_scope.judges import Answer
 from repeat_o_scope.waste import Tally
 
@@ -107,3 +110,64 @@ def test_prompts_and_commands_carry_no_cost(transcripts, tmp_path, no_judge):
     transcripts.write([transcripts.user('run the tests please') for _ in range(4)] + [transcripts.user('<bash-input>git status</bash-input>') for _ in range(4)])
     counted = [(f.kind, f.total, f.cost) for f in _run(transcripts, tmp_path).findings if f.cost is None]
     assert counted == [('prompt', 4, None), ('command', 4, None)]
+
+
+def _cli(transcripts, tmp_path, **kwargs):
+    return cli.Scope(root=str(transcripts.root), claude_dir=str(tmp_path / 'claude'), data_dir=str(tmp_path / 'data'), **kwargs)
+
+
+def test_audit_json_is_the_whole_document(transcripts, tmp_path, no_judge):
+    transcripts.write(_failed(transcripts, 1) + _failed(transcripts, 2))
+    doc = json.loads(_cli(transcripts, tmp_path, jev=True).audit())
+    del doc['generated_at']
+    checks = doc.pop('checks')
+    finding_id = doc['findings'][0]['id']
+    zero = {'turns': 0, 'tokens': 0, 'weight': 0.0, 'share': 0.0}
+    assert doc == {
+        'report': 'audit',
+        'days': 30,
+        'judge': None,
+        'note': '',
+        'total': {'turns': 2, 'tokens': 200, 'weight': 200.0},
+        'waste': {k: zero for k in ('refused_edit', 'reread', 'denied', 'bare_yes', 'cache_rebuild', 'long_context')}
+        | {'failed': {'turns': 2, 'tokens': 200, 'weight': 200.0, 'share': 1.0}},
+        'findings': [{
+            'id': finding_id,
+            'kind': 'failed',
+            'total': 2,
+            'variants': [{'text': 'edit: <path> → boom', 'count': 2}],
+            'examples': ['Edit: C:\\a.py → boom'],
+            'label': None,
+            'cost': {'turns': 2, 'tokens': 200, 'weight': 200.0},
+            'share': 1.0,
+        }],
+    }
+    expected = doctor.diagnose(claude_dir=tmp_path / 'claude', project_dir=Path.cwd())
+    assert checks == [dataclasses.asdict(c) for c in expected]
+
+
+def test_audit_drops_declined_and_all_brings_them_back(transcripts, tmp_path, no_judge):
+    transcripts.write(_failed(transcripts, 1) + _failed(transcripts, 2))
+    finding_id = json.loads(_cli(transcripts, tmp_path, format='json').audit())['findings'][0]['id']
+    _cli(transcripts, tmp_path).decline(finding_id)
+    assert json.loads(_cli(transcripts, tmp_path, format='json').audit())['findings'] == []
+    assert len(json.loads(_cli(transcripts, tmp_path, format='json', all=True).audit())['findings']) == 1
+
+
+def test_audit_writes_the_baseline(transcripts, tmp_path, no_judge):
+    transcripts.write(_failed(transcripts, 1))
+    _cli(transcripts, tmp_path).audit()
+    [baseline] = (tmp_path / 'data' / 'baseline').glob('*.json')
+    assert baseline.name == f'{transcripts.now.date().isoformat()}.json'
+    assert json.loads(baseline.read_text(encoding='utf-8'))['total'] == {'turns': 1, 'tokens': 100, 'weight': 100.0}
+
+
+def test_audit_markdown_leads_with_the_headline(transcripts, tmp_path, no_judge):
+    transcripts.write(_failed(transcripts, 1) + _failed(transcripts, 2))
+    text = _cli(transcripts, tmp_path, format='markdown').audit()
+    assert text.splitlines()[:3] == [
+        '# Audit',
+        '',
+        '_Last 30 days: 2 of 2 turns wasted, 0 more rebuilt an expired cache and 0 ran past half their context: 100.0% of your usage._',
+    ]
+    assert '1. **100.0%** failed, 2 turns: edit: <path> → boom' in text, text

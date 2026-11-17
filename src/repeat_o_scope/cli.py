@@ -82,6 +82,36 @@ class Scope:
             raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
         return renderers[self._format](doctor.diagnose(claude_dir=self._claude_dir, project_dir=Path.cwd()))
 
+    def audit(self) -> str:
+        """Waste, what it was spent on and what it cost, repeats and settings in one pass, for the skill.
+
+        Writes the measurement as today's baseline. `--jev` judges the findings with the first available judge.
+        """
+        # JSON by default: the skill reads this, a person reads `measure` or `--format markdown`.
+        renderers = {None: render.audit_json, 'json': render.audit_json, 'markdown': self._audit_markdown}
+        if self._format not in renderers:
+            raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
+        a = audit.run(
+            claude_dir=self._claude_dir,
+            days=self._days,
+            judge=self._jev,
+            project_dir=Path.cwd(),
+            root=self._root,
+            since=self._since,
+        )
+        report = Report(name='audit', days=self._days, jev=self._jev, totals={}, findings=a.findings)
+        declined.remember_last(data_dir=self._data_dir, report=report)
+        if not self._all:
+            a = dataclasses.replace(a, findings=declined.drop_declined(data_dir=self._data_dir, findings=a.findings))
+        baseline = self._data_dir / 'baseline' / f'{datetime.now(timezone.utc).date().isoformat()}.json'
+        baseline.parent.mkdir(parents=True, exist_ok=True)
+        baseline.write_text(render.measurement_json(a.measurement, price=None), encoding='utf-8')
+        _LOGGER.info('Wrote the baseline to `%s`.', baseline)
+        return renderers[self._format](a)
+
+    def _audit_markdown(self, a: audit.Audit) -> str:
+        return render.audit_markdown(a, top=self._top)
+
     def install(self) -> str:
         """Installs the repeat-o-scope skill and the worklog Stop hook into ~/.claude."""
         return '\n'.join(install.install(claude_dir=self._claude_dir)) or 'Already installed.'

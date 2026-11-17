@@ -5,6 +5,7 @@ import json
 import re
 from datetime import datetime, timezone
 
+from repeat_o_scope.audit import Audit
 from repeat_o_scope.doctor import Check
 from repeat_o_scope.findings import Finding, Report
 from repeat_o_scope.waste import Measurement, Tally
@@ -137,17 +138,47 @@ def _measurement_rows(m: Measurement, *, price: float | None) -> list[list[str]]
 
 def measurement_json(m: Measurement, *, price: float | None) -> str:
     """Returns the measurement as JSON, with `eur` only when `price` is set."""
-    def tally(t: Tally) -> dict:
-        return dataclasses.asdict(t) | ({'eur': round(_eur(t, price=price), 2)} if price is not None else {})
-
     doc = {
         'report': 'measure',
         'days': m.days,
         'generated_at': datetime.now(timezone.utc).isoformat(),
+    } | _measurement_doc(m, price=price)
+    return json.dumps(doc, ensure_ascii=False, indent=2)
+
+
+def _measurement_doc(m: Measurement, *, price: float | None) -> dict:
+    def tally(t: Tally) -> dict:
+        return dataclasses.asdict(t) | ({'eur': round(_eur(t, price=price), 2)} if price is not None else {})
+
+    return {
         'total': tally(m.total),
         'waste': {kind: tally(t) | {'share': _share(t.weight, m.total)} for kind, t in m.waste.items()},
     }
+
+
+def audit_json(a: Audit) -> str:
+    """Returns the audit as JSON for the skill: measurement, findings with their cost, and settings checks."""
+    doc = {
+        'report': 'audit',
+        'days': a.measurement.days,
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'judge': a.judge,
+        'note': a.note,
+    } | _measurement_doc(a.measurement, price=None) | {
+        'findings': [finding_dict(f) for f in a.findings],
+        'checks': [dataclasses.asdict(c) for c in a.checks],
+    }
     return json.dumps(doc, ensure_ascii=False, indent=2)
+
+
+def audit_markdown(a: Audit, *, top: int) -> str:
+    """Returns the audit as markdown: the headline, the costliest `top` findings, then failing checks."""
+    lines = ['# Audit', '', f'_{_measurement_headline(a.measurement)}_', '', a.note]
+    wasted = [f for f in a.findings if f.cost is not None]
+    for i, f in enumerate(wasted[:top], start=1):
+        lines.append(f'{i}. **{f.share:.1%}** {f.kind}, {f.cost.turns} turns: {_shown(f.variants[0].text)}')
+    lines += ['', _checks_headline(a.checks)] + [f'- {c.name}: {c.fix}' for c in a.checks if not c.ok]
+    return '\n'.join(lines)
 
 
 def _share(weight: float, total: Tally) -> float:
