@@ -1,43 +1,37 @@
-from types import SimpleNamespace
-
 import pytest
 
-from repeat_o_scope import cli, judge, transcripts as t
+from repeat_o_scope import cli, judge, judges
+from repeat_o_scope.judges import Answer
 
 
-class _FakeJev:
-    """Stands in for the TypeSafe API: answers from keywords in the state, and records every call."""
+class _FakeJudge(judges.Judge):
+    """Stands in for a judge's API: answers from keywords in the state, and records every call."""
+
+    name = 'fake'
+    env = ()
 
     def __init__(self):
         self.calls = []
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def system_one(self, *, state, questions):
+    async def _ask(self, *, questions, state):
         self.calls.append((state, questions))
         if 'closing' in state:
-            kind = 'permission' if 'ship' in state['closing'] else 'report'
-            return SimpleNamespace(choices={'kind': SimpleNamespace(choice=kind)}, nouls={})
-        real = 'warning' not in state['error']
-        return SimpleNamespace(choices={}, nouls={'real': SimpleNamespace(noul=0.9 if real else 0.1)})
+            return {'kind': Answer(choice='permission' if 'ship' in state['closing'] else 'report', noul=None)}
+        return {'real': Answer(choice=None, noul=0.1 if 'warning' in state['failure'] else 0.9)}
 
 
 @pytest.fixture
 def jev(monkeypatch):
-    fake = _FakeJev()
-    monkeypatch.setattr(judge, 'make_client', lambda: fake)
+    fake = _FakeJudge()
+    monkeypatch.setattr(judges, 'open_judge', lambda: fake)
     return fake
 
 
-def test_without_jev_flag_no_client_is_made(transcripts, monkeypatch):
+def test_without_jev_flag_no_judge_is_opened(transcripts, monkeypatch):
     def refuse():
-        raise AssertionError('Jev must not be called without --jev')
+        raise AssertionError('No judge may be opened without --jev')
 
-    monkeypatch.setattr(judge, 'make_client', refuse)
+    monkeypatch.setattr(judges, 'open_judge', refuse)
     transcripts.write([
         transcripts.assistant([{'type': 'text', 'text': 'Say "ship" and I will push.'}]),
         transcripts.user('ship'),
@@ -46,7 +40,7 @@ def test_without_jev_flag_no_client_is_made(transcripts, monkeypatch):
 
 
 def test_kinds_of_asks_one_question_per_closing(jev):
-    kinds = judge.kinds_of_asks(['Say "ship" and I will push.', 'The commit says Refs #188.'])
+    kinds = judge.kinds_of_asks(['Say "ship" and I will push.', 'The commit says Refs #188.'], judge=jev)
     assert kinds == ['permission', 'report']
     state, questions = jev.calls[0]
     assert state == {'closing': 'Say "ship" and I will push.'}
@@ -54,12 +48,19 @@ def test_kinds_of_asks_one_question_per_closing(jev):
 
 
 def test_real_failures_keeps_only_real_ones(jev):
-    failures = [
-        t.ToolFailure(tool='Edit', attempt='C:\\a.py', error='File has not been read yet.'),
-        t.ToolFailure(tool='PowerShell', attempt='git add .', error='warning: LF will be replaced by CRLF'),
-    ]
-    assert judge.real_failures(failures) == [True, False]
-    assert jev.calls[1][0] == {'tool': 'PowerShell', 'attempt': 'git add .', 'error': 'warning: LF will be replaced by CRLF'}
+    failures = ['Edit: C:\\a.py → File has not been read yet.', 'PowerShell: git add . → warning: LF will be replaced']
+    assert judge.real_failures(failures, judge=jev) == [True, False]
+    assert jev.calls[1][0] == {'failure': 'PowerShell: git add . → warning: LF will be replaced'}
+
+
+def test_no_judge_fails_the_jev_report(transcripts, monkeypatch):
+    monkeypatch.setattr(judges, 'open_judge', lambda: None)
+    transcripts.write([
+        transcripts.assistant([{'type': 'text', 'text': 'Say "ship" and I will push.'}]),
+        transcripts.user('ship'),
+    ])
+    with pytest.raises(cli.findings.RepeatOScopeError, match='No judge available'):
+        cli.Scope(root=str(transcripts.root), jev=True).asks()
 
 
 def test_asks_report_groups_closings_by_kind(transcripts, jev):
@@ -86,4 +87,4 @@ def test_fails_report_drops_noise_groups(transcripts, jev):
     failures = report.split('## Denied')[0]
     assert 'file has not been read yet' in failures, report
     assert 'crlf' not in failures, report
-    assert 'Jev judged 1 group(s) as noise' in failures, report
+    assert 'fake judged 1 group(s) as noise' in failures, report

@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, declined, doctor, findings, install, judge, render, transcripts, waste
+from repeat_o_scope import cluster, declined, doctor, findings, install, judge, judges, render, transcripts, waste
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,7 +121,7 @@ class Scope:
         closings = collections.Counter(e.closing for e in wasted)
         if self._jev and closings:
             distinct = list(closings)
-            kind_of = dict(zip(distinct, judge.kinds_of_asks(distinct)))
+            kind_of = dict(zip(distinct, judge.kinds_of_asks(distinct, judge=_open_judge())))
             groups = collections.defaultdict(collections.Counter)
             for c, n in closings.items():
                 groups[kind_of[c]][c] = n
@@ -162,8 +162,10 @@ class Scope:
         note, label = '', None
         if self._jev and failure_clusters:
             # One example per group: the first failure behind its most frequent variant.
-            real = judge.real_failures([failed[c.variants[0][0]][0] for c in failure_clusters])
-            note = f'Jev judged {sum(not r for r in real)} group(s) as noise on stderr and left them out.'
+            judged_by = _open_judge()
+            firsts = [failed[c.variants[0][0]][0] for c in failure_clusters]
+            real = judge.real_failures([f'{f.tool}: {f.attempt} → {f.error}' for f in firsts], judge=judged_by)
+            note = f'{judged_by.name} judged {sum(not r for r in real)} group(s) as noise on stderr and left them out.'
             failure_clusters, label = [c for c, r in zip(failure_clusters, real) if r], 'real'
         denial_clusters, denial_noise = cluster.rank(_repeated(denied), min_size=_MIN_SIZE)
         originals = {
@@ -202,6 +204,12 @@ class Scope:
             totals={'items': sum(map(len, originals.values())), 'groups': len(clusters), 'one_offs': noise},
             findings=[findings.from_cluster(report=name, kind=kind, cluster=c, originals=originals) for c in clusters],
         )
+
+
+def _open_judge() -> judges.Judge:
+    if (opened := judges.open_judge()) is None:
+        raise findings.RepeatOScopeError('No judge available: set a Jev, Gemini or Cloudflare key!')
+    return opened
 
 
 def _repeated(groups: dict[str, list]) -> list[str]:

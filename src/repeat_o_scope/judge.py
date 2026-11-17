@@ -1,15 +1,14 @@
-"""Typed judgments from Jev (TypeSafe System One) where clustering alone cannot tell things apart."""
+"""Typed judgments where clustering alone cannot tell things apart."""
 
 import asyncio
 import logging
 
-from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul
+from typesafe_sdk import Choice, Noul
 
-from repeat_o_scope.transcripts import ToolFailure
+from repeat_o_scope.judges import Judge
 
 _LOGGER = logging.getLogger(__name__)
 
-_TIMEOUT_SECONDS = 30
 _CONCURRENCY = 8
 _ASK = Choice(
     instructions=(
@@ -29,45 +28,40 @@ _ASK = Choice(
 )
 _REAL = Noul(
     instructions=(
-        'An AI coding assistant used the tool `tool` to do `attempt`, and the result was flagged as an error with '
-        '`error` as its first line. Did the attempt really fail to do what it was meant to do? Answer no when '
-        '`error` is only normal output written to stderr, a warning, a progress line, or a non-zero exit the '
-        'command was expected to produce, such as a test run or a linter reporting what it found.'
+        'An AI coding assistant made a tool call, and the result was flagged as an error. `failure` reads '
+        '"<tool>: <what it tried> → <first line of the error>". Did the attempt really fail to do what it was '
+        'meant to do? Answer no when the error is only normal output written to stderr, a warning, a progress '
+        'line, or a non-zero exit the command was expected to produce, such as a test run or a linter reporting '
+        'what it found.'
     ),
 )
 
 
-def make_client() -> AsyncTypeSafeClient:
-    """Returns a Jev client; reads the API key from `TYPESAFE_API_KEY`."""
-    return AsyncTypeSafeClient(timeout=_TIMEOUT_SECONDS)
-
-
-def kinds_of_asks(closings: list[str]) -> list[str]:
+def kinds_of_asks(closings: list[str], *, judge: Judge) -> list[str]:
     """Returns the kind of ask (a key of `_ASK.criteria`) for each closing line."""
-    answers = _ask_all([({'closing': c}, {'kind': _ASK}) for c in closings])
-    return [a.choices['kind'].choice for a in answers]
+    answers = _ask_all([({'closing': c}, {'kind': _ASK}) for c in closings], judge=judge)
+    return [a['kind'].choice for a in answers]
 
 
-def real_failures(failures: list[ToolFailure]) -> list[bool]:
-    """Returns, for each failure, whether Jev judges it a real failure rather than noise on stderr."""
-    states = [{'tool': f.tool, 'attempt': f.attempt, 'error': f.error} for f in failures]
-    answers = _ask_all([(s, {'real': _REAL}) for s in states])
-    return [a.nouls['real'].noul >= 0.5 for a in answers]
+def real_failures(failures: list[str], *, judge: Judge) -> list[bool]:
+    """Returns, for each failure ("tool: attempt → error"), whether it really failed rather than wrote to stderr."""
+    answers = _ask_all([({'failure': f}, {'real': _REAL}) for f in failures], judge=judge)
+    return [a['real'].noul >= 0.5 for a in answers]
 
 
-def _ask_all(requests: list[tuple[dict, dict]]) -> list:
+def _ask_all(requests: list[tuple[dict, dict]], *, judge: Judge) -> list[dict]:
     """Returns the answers to independent requests, run concurrently in request order."""
 
     async def run():
         limit = asyncio.Semaphore(_CONCURRENCY)
-        async with make_client() as client:
+        async with judge:
 
             async def one(state, questions):
                 async with limit:
-                    return await client.system_one(state=state, questions=questions)
+                    return await judge.ask(state=state, questions=questions)
 
             return await asyncio.gather(*(one(s, q) for s, q in requests))
 
     answers = asyncio.run(run())
-    _LOGGER.info('Asked Jev `%s` questions.', len(answers))
+    _LOGGER.info('Asked `%s` `%s` questions.', judge.name, len(answers))
     return answers
