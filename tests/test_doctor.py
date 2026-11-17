@@ -35,8 +35,10 @@ def _checks(dirs) -> dict[str, Check]:
 
 def test_fresh_install_fails_every_check(dirs):
     checks = doctor.diagnose(claude_dir=dirs[0], project_dir=dirs[1])
-    assert [c.name for c in checks] == list(doctor.CHECKS), checks
-    assert not any(c.ok for c in checks), checks
+    assert sorted(c.name for c in checks) == sorted(doctor.CHECKS), checks
+    # No skills at all is under the limit: there is nothing to turn off.
+    assert [c.name for c in checks if c.ok] == ['skills'], checks
+    assert checks[-1].name == 'skills', checks
     assert all(c.fix for c in checks if c.name == 'effort'), checks
 
 
@@ -63,6 +65,69 @@ def test_effort_medium_per_model_passes(dirs):
 def test_effort_high_fails(dirs):
     path = _settings(dirs[0] / 'settings.json', {'modelSettings': {'claude-opus-5-5': {'effortLevel': 'high'}}})
     assert _checks(dirs)['effort'] == Check('effort', False, f'high ({path})', 'Set effort to medium in /config.')
+
+
+def _skill(directory, name):
+    path = directory / name / 'SKILL.md'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'---\nname: {name}\n---\n', encoding='utf-8')
+
+
+def _plugins(claude_dir, plugins: dict[str, tuple]):
+    """Writes `installed_plugins.json` and returns `enabledPlugins` for `{key: (install_path, enabled)}`."""
+    installed = {
+        'version': 2,
+        'plugins': {key: [{'scope': 'user', 'installPath': str(path)}] for key, (path, _) in plugins.items()},
+    }
+    _settings(claude_dir / 'plugins' / 'installed_plugins.json', installed)
+    return {key: enabled for key, (_, enabled) in plugins.items()}
+
+
+def _skill_setup(dirs, *, overrides=None):
+    claude_dir, project_dir = dirs
+    for name in ('mine', 'other'):
+        _skill(claude_dir / 'skills', name)
+    _skill(project_dir / '.claude' / 'skills', 'repo')
+    cache = claude_dir / 'plugins' / 'cache'
+    for name in ('plan', 'debug', 'review'):
+        _skill(cache / 'sp' / '2.0' / 'skills', name)
+        _skill(cache / 'sp' / '1.0' / 'skills', name)
+    for i in range(5):
+        _skill(cache / 'off' / '1.0' / 'skills', f'off{i}')
+    enabled = _plugins(claude_dir, {'sp@market': (cache / 'sp' / '2.0', True), 'off@market': (cache / 'off' / '1.0', False)})
+    _settings(claude_dir / 'settings.json', {'enabledPlugins': enabled} | ({'skillOverrides': overrides} if overrides else {}))
+
+
+def test_no_overrides_fails(dirs):
+    assert _checks(dirs)['skill_overrides'] == Check(
+        'skill_overrides', False, 'not set', 'Turn off skills you never use with skillOverrides in settings.json.'
+    )
+
+
+def test_overrides_off_pass(dirs):
+    path = _settings(dirs[0] / 'settings.json', {'skillOverrides': {'html-report': 'off', 'vjuu': 'off'}})
+    assert _checks(dirs)['skill_overrides'] == Check('skill_overrides', True, f'2 skills off ({path})', '')
+
+
+def test_skills_counted_from_user_project_and_enabled_plugins(dirs):
+    _skill_setup(dirs)
+    assert _checks(dirs)['skills'] == Check('skills', True, 'at least 6 enabled', '')
+
+
+def test_overridden_skills_are_not_counted(dirs):
+    _skill_setup(dirs, overrides={'mine': 'off', 'sp:plan': 'off'})
+    assert _checks(dirs)['skills'].found == 'at least 4 enabled'
+
+
+def test_more_than_max_skills_fails(dirs):
+    for i in range(31):
+        _skill(dirs[0] / 'skills', f's{i}')
+    assert _checks(dirs)['skills'] == Check(
+        'skills',
+        False,
+        'at least 31 enabled',
+        "Turn off skills you never use: every enabled skill's description is in context on every turn.",
+    )
 
 
 def test_local_settings_override_user(dirs):
