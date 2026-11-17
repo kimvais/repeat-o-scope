@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+import pytest
+
 from repeat_o_scope import waste
 from repeat_o_scope.waste import Tally
 
@@ -156,6 +158,16 @@ def test_call_charged_elsewhere_is_not_long_context(transcripts):
     ])
     m = _measure(transcripts)
     assert (m.waste['refused_edit'].turns, m.waste['long_context'].turns) == (1, 0), m
+
+
+@pytest.mark.parametrize('error', [
+    '<tool_use_error>No such tool available: Bash</tool_use_error>',
+    "Permission to use Grep has been denied because Claude Code is running in don't ask mode.",
+])
+def test_unavailable_or_denied_tool_is_denied(transcripts, error):
+    transcripts.write([_call(transcripts, id='m1', blocks=[_tool_use('u1', name='Bash')]), _result(transcripts, 'u1', error)])
+    m = _measure(transcripts)
+    assert (m.waste['denied'].turns, m.waste['failed'].turns) == (1, 0), m
 
 
 def test_call_with_two_failures_is_charged_once(transcripts):

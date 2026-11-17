@@ -120,7 +120,20 @@ def test_measure_markdown():
     m = _measurement(total=Tally(100, 1_000_000, 500_000.0), refused_edit=Tally(10, 50_000, 25_000.0))
     text = render.measurement_markdown(m, price=None)
     assert text.startswith('# Wasted turns'), text
-    assert '_Last 30 days: 10 of 100 turns wasted, 5.0% of your usage._' in text, text
+    assert '_Last 30 days: 10 of 100 turns wasted, and 0 more ran past half their context: 5.0% of your usage._' in text, text
     assert '| Refused edits | 10 | 5.0% | 50,000 |' in text, text
     assert '| Refused edits | 10 | 5.0% | 50,000 | €0.10 |' in render.measurement_markdown(m, price=4.0)
     assert json.loads(render.measurement_json(m, price=4.0))['waste']['refused_edit']['eur'] == 0.1
+
+
+def test_measure_headline_counts_long_context_apart():
+    from repeat_o_scope import render
+    from repeat_o_scope.waste import Tally
+
+    m = _measurement(
+        total=Tally(100, 1_000_000, 500_000.0),
+        refused_edit=Tally(10, 50_000, 25_000.0),
+        long_context=Tally(40, 50_000, 25_000.0),
+    )
+    text = render.measurement_markdown(m, price=None)
+    assert '_Last 30 days: 10 of 100 turns wasted, and 40 more ran past half their context: 10.0% of your usage._' in text, text

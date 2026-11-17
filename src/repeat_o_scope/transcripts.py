@@ -32,7 +32,9 @@ _GO_AHEAD = re.compile(
 )
 # Tool calls refused by a person, a hook or the permission classifier: not failures to automate away.
 _DENIED = re.compile(
-    r"permission for this action was denied|doesn't want to proceed|denied this in vjuu|hook error|blocked by",
+    r"permission for this action was denied|doesn't want to proceed|denied this in vjuu|hook error|blocked by"
+    # A tool the settings deny or don't offer at all, e.g. Bash on Windows.
+    r'|no such tool available|permission to use \w+ has been denied',
     re.IGNORECASE,
 )
 

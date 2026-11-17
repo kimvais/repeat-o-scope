@@ -66,11 +66,14 @@ def markdown(report: Report, *, top: int) -> str:
 
 def measurement_markdown(m: Measurement, *, price: float | None) -> str:
     """Returns the measurement as a markdown table, with euros only when `price` is set."""
-    wasted = sum(t.turns for t in m.waste.values())
+    # A long-context turn wastes only its excess context, so it is not counted as a wasted turn.
+    long = m.waste['long_context'].turns
+    wasted = sum(t.turns for t in m.waste.values()) - long
     lines = [
         '# Wasted turns',
         '',
         f'_Last {m.days} days: {wasted} of {m.total.turns} turns wasted, '
+        f'and {long} more ran past half their context: '
         f'{_share(sum(t.weight for t in m.waste.values()), m.total):.1%} of your usage._',
         '',
         '| Kind | Turns | Share of usage | Tokens |' + (' € |' if price is not None else ''),
