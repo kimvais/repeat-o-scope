@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, declined, findings, install, judge, render, transcripts, waste
+from repeat_o_scope import cluster, declined, doctor, findings, install, judge, render, transcripts, waste
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +73,14 @@ class Scope:
             raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
         m = waste.measure(days=self._days, root=self._root, since=self._since)
         return renderers[self._format](m, price=self._price)
+
+    def doctor(self) -> str:
+        """Checks your settings and CLAUDE.md against the budget checklist in docs/why.md."""
+        # Not through `_out`: checks are not findings to remember or decline.
+        renderers = {None: render.checks_table, 'markdown': render.checks_markdown, 'json': render.checks_json}
+        if self._format not in renderers:
+            raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
+        return renderers[self._format](doctor.diagnose(claude_dir=self._claude_dir, project_dir=Path.cwd()))
 
     def install(self) -> str:
         """Installs the repeat-o-scope skill and the worklog Stop hook into ~/.claude."""

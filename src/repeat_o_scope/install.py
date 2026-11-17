@@ -21,7 +21,7 @@ _BACKUP_SUFFIX = '.repeat-o-scope.bak'
 def install(*, claude_dir: Path) -> list[str]:
     """Copies the skill and registers the Stop hook; returns what changed."""
     settings_path = claude_dir / 'settings.json'
-    settings = _load(settings_path)
+    settings = load_settings(settings_path)
     stop = settings.setdefault('hooks', {}).setdefault('Stop', [])
     changes = []
     for group in stop:
@@ -50,7 +50,7 @@ def install(*, claude_dir: Path) -> list[str]:
 def uninstall(*, claude_dir: Path) -> list[str]:
     """Removes the Stop hook and the skill; returns what changed."""
     settings_path = claude_dir / 'settings.json'
-    settings = _load(settings_path)
+    settings = load_settings(settings_path)
     changes = []
     hooks = settings.get('hooks', {})
     stop = hooks.get('Stop', [])
@@ -81,12 +81,13 @@ def _skill_path(claude_dir: Path) -> Path:
     return claude_dir / 'skills' / 'repeat-o-scope' / 'SKILL.md'
 
 
-def _load(path: Path) -> dict:
+def load_settings(path: Path) -> dict:
+    """Returns a settings file as a dict, or an empty one if it does not exist."""
     if not path.exists():
         return {}
     try:
         settings = json.loads(path.read_text(encoding='utf-8-sig'))
-    except json.JSONDecodeError as err:
+    except (json.JSONDecodeError, UnicodeDecodeError) as err:
         # Never rewrite a file we cannot parse: the user's other settings would be lost.
         raise RepeatOScopeError(f'Cannot parse {path}, leaving it untouched: {err}!') from err
     if not isinstance(settings, dict):

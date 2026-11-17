@@ -86,6 +86,35 @@ priced per million input tokens. Caveats:
 - Transcripts don't say whether a session ran with a 200k or 1M context window. Each session gets the
   smallest one that fits its largest call.
 
+## Doctor
+
+```
+repeat-o-scope doctor     # your settings and CLAUDE.md against the checklist in docs/why.md
+```
+
+`doctor` reads config, not transcripts, and says what to change, failing checks first:
+
+- **Effort:** `effortLevel`, top-level or per model under `modelSettings`, is `low` or `medium`.
+- **Skill overrides:** `skillOverrides` turns at least one skill `off`.
+- **Enabled skills:** at most 30, counted from `~/.claude/skills`, `.claude/skills` and enabled plugins.
+- **Status line:** `statusLine` runs a command.
+- **Scope rule** and **read-once rule:** a `CLAUDE.md` (`~/.claude/`, the current directory or its `.claude/`)
+  has them, matched by their key phrases.
+- **Idle compact:** `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` is at most 100000, so idle compact runs on ordinary
+  sessions during long breaks with the terminal open.
+- **Auto-compact override:** no `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` below 50, unless the model is a 1M one
+  (`opus[1m]`). On 200k, 25 compacts at 45,000 tokens, below what a summary leaves.
+
+The two compaction checks follow
+[claude-code-usage-analysis](https://github.com/inevolin/claude-code-usage-analysis). They read `env` in
+the settings files, then your environment.
+
+It prints a table for the terminal; `--format markdown` or `--format json` gives agents plain text. It never
+writes anything and never prints settings values it doesn't check. Caveats:
+- It reads the user, project and local `settings.json`, local first. Managed settings are not read.
+- Built-in and claude.ai skills aren't on disk, so the skill count is a lower bound.
+- It checks that a status line exists, not that it shows context % and usage %.
+
 ### `--jev`
 
 Clustering can't tell a request for a go-ahead from a plain status line, or a real failure from a tool that
