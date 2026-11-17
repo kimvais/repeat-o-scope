@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import logging
+import re
 from pathlib import Path
 
 from repeat_o_scope.install import load_settings
@@ -13,6 +14,19 @@ CHECKS = ('effort', 'skill_overrides', 'skills', 'status_line', 'scope_rule', 'r
 _LOW_EFFORT = {'low', 'medium'}
 # docs/why.md gives no number; above this, skill descriptions are a noticeable fixed cost per turn.
 _MAX_SKILLS = 30
+# The two rules docs/why.md says to copy first, matched by their key phrases; the fix is the rule's text there.
+_RULES = {
+    'scope_rule': (
+        re.compile(r'whole scope|out of scope|\(OOS\)', re.IGNORECASE),
+        'Add to CLAUDE.md: "The issue is the whole scope. Repo rules shape the code but never add work; '
+        "anything extra goes in the summary as 'left out (OOS)'.\"",
+    ),
+    'read_once_rule': (
+        re.compile(r'read,? edit,? read,? edit|read (?:\w+ ){0,3}once|in one pass', re.IGNORECASE),
+        'Add to CLAUDE.md: "No read, edit, read, edit loop. List every file needed, read them in one pass, '
+        'make all edits, run the tests once."',
+    ),
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -30,8 +44,14 @@ def diagnose(*, claude_dir: Path, project_dir: Path) -> list[Check]:
         'effort': _effort(layers),
         'skill_overrides': _skill_overrides(layers),
         'skills': _skills(claude_dir=claude_dir, layers=layers, project_dir=project_dir),
+        'status_line': _status_line(layers),
     }
-    checks = [done.get(name, Check(name, False, 'not checked yet', '')) for name in CHECKS]
+    claude_mds = [claude_dir / 'CLAUDE.md', project_dir / 'CLAUDE.md', project_dir / '.claude' / 'CLAUDE.md']
+    texts = [(p, p.read_text(encoding='utf-8-sig', errors='replace')) for p in claude_mds if p.exists()]
+    for name, (pattern, fix) in _RULES.items():
+        where = next((p for p, text in texts if pattern.search(text)), None)
+        done[name] = Check(name, True, _shown(where), '') if where else Check(name, False, 'not found', fix)
+    checks = [done[name] for name in CHECKS]
     checks.sort(key=lambda c: c.ok)
     _LOGGER.info('Checked %s settings, %s to fix.', len(checks), sum(not c.ok for c in checks))
     return checks
@@ -83,6 +103,15 @@ def _skills(*, claude_dir: Path, layers: list[tuple[Path, dict]], project_dir: P
     if count > _MAX_SKILLS:
         return Check('skills', False, found, "Turn off skills you never use: every enabled skill's description is in context on every turn.")
     return Check('skills', True, found, '')
+
+
+def _status_line(layers: list[tuple[Path, dict]]) -> Check:
+    for path, settings in layers:
+        status_line = settings.get('statusLine')
+        if isinstance(status_line, dict) and status_line.get('command'):
+            # The file, not the command: a command line may carry a token.
+            return Check('status_line', True, _shown(path), '')
+    return Check('status_line', False, 'not set', 'Add context % and usage % to your status line.')
 
 
 def _install_paths(claude_dir: Path) -> dict[str, str]:

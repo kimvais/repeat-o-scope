@@ -39,7 +39,7 @@ def test_fresh_install_fails_every_check(dirs):
     # No skills at all is under the limit: there is nothing to turn off.
     assert [c.name for c in checks if c.ok] == ['skills'], checks
     assert checks[-1].name == 'skills', checks
-    assert all(c.fix for c in checks if c.name == 'effort'), checks
+    assert all(c.fix for c in checks if not c.ok), checks
 
 
 def test_broken_settings_raise(dirs):
@@ -128,6 +128,63 @@ def test_more_than_max_skills_fails(dirs):
         'at least 31 enabled',
         "Turn off skills you never use: every enabled skill's description is in context on every turn.",
     )
+
+
+_SCOPE_FIX = (
+    'Add to CLAUDE.md: "The issue is the whole scope. Repo rules shape the code but never add work; '
+    "anything extra goes in the summary as 'left out (OOS)'.\""
+)
+_READ_ONCE_FIX = (
+    'Add to CLAUDE.md: "No read, edit, read, edit loop. List every file needed, read them in one pass, '
+    'make all edits, run the tests once."'
+)
+
+
+def test_no_status_line_fails(dirs):
+    assert _checks(dirs)['status_line'] == Check(
+        'status_line', False, 'not set', 'Add context % and usage % to your status line.'
+    )
+
+
+def test_status_line_command_passes(dirs):
+    path = _settings(dirs[0] / 'settings.json', {'statusLine': {'type': 'command', 'command': 'pwsh -File s.ps1'}})
+    assert _checks(dirs)['status_line'] == Check('status_line', True, str(path), '')
+
+
+def test_rules_missing_fail(dirs):
+    (dirs[0] / 'CLAUDE.md').write_text('Use uv.', encoding='utf-8')
+    checks = _checks(dirs)
+    assert checks['scope_rule'] == Check('scope_rule', False, 'not found', _SCOPE_FIX)
+    assert checks['read_once_rule'] == Check('read_once_rule', False, 'not found', _READ_ONCE_FIX)
+
+
+@pytest.mark.parametrize('where', ['user', 'project', 'project_dot_claude'])
+@pytest.mark.parametrize(
+    ('text', 'name'),
+    [
+        ('The issue or request is the whole scope.', 'scope_rule'),
+        ('Anything else is left out (OOS).', 'scope_rule'),
+        ('No read, edit, read, edit loop.', 'read_once_rule'),
+        ('List every file, read them in one pass.', 'read_once_rule'),
+        ('Read once, edit once, test once.', 'read_once_rule'),
+    ],
+)
+def test_rules_found_in_any_claude_md(dirs, where, text, name):
+    claude_dir, project_dir = dirs
+    path = {
+        'user': claude_dir / 'CLAUDE.md',
+        'project': project_dir / 'CLAUDE.md',
+        'project_dot_claude': project_dir / '.claude' / 'CLAUDE.md',
+    }[where]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'# Rules\n{text}\n', encoding='utf-8')
+    assert _checks(dirs)[name] == Check(name, True, str(path), '')
+
+
+def test_rule_words_apart_do_not_match(dirs):
+    (dirs[0] / 'CLAUDE.md').write_text('Read the docs. Scope it down. Do it once.', encoding='utf-8')
+    checks = _checks(dirs)
+    assert (checks['scope_rule'].ok, checks['read_once_rule'].ok) == (False, False), checks
 
 
 def test_local_settings_override_user(dirs):
