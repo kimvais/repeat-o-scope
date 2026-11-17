@@ -132,7 +132,44 @@ def test_first_stop_writes_whole_entry(env):
             long_text[:200] + '...',
         ],
         'transcript': str(env['transcript']),
+        'rate_limits': None,
+        'rate_limit_peak': None,
     }
+
+
+def _rate_limits(env, **windows):
+    env['state_dir'].mkdir(exist_ok=True)
+    data = {k: {'used_percentage': v, 'resets_at': 1794900000} for k, v in windows.items()}
+    (env['state_dir'] / 's-1.rate-limits.json').write_text(json.dumps(data), encoding='utf-8')
+    return data
+
+
+@pytest.mark.parametrize('content', ['', '{"five_hour": ', '[1, 2]', '"text"', '{"five_hour": 42}'])
+def test_bad_rate_limits_file_is_ignored(env, content):
+    env['state_dir'].mkdir()
+    (env['state_dir'] / 's-1.rate-limits.json').write_text(content, encoding='utf-8')
+    _stop(env)
+    entry = _lines(env)[-1]
+    assert (entry['rate_limits'], entry['rate_limit_peak']) == (None, None), entry
+
+
+def test_rate_limits_logged_with_peak_over_stretch(env):
+    first = _rate_limits(env, five_hour=100, seven_day=40.5)
+    _stop(env)
+    # The 5-hour window reset mid-stretch; the peak still shows the stretch hit the limit.
+    second = _rate_limits(env, five_hour=3, seven_day=41)
+    _stop(env, now=_NOW + timedelta(minutes=5))
+    a, b = _lines(env)
+    assert (a['rate_limits'], a['rate_limit_peak']) == (first, {'five_hour': 100, 'seven_day': 40.5})
+    assert (b['rate_limits'], b['rate_limit_peak']) == (second, {'five_hour': 100, 'seven_day': 41})
+
+
+def test_new_stretch_resets_rate_limit_peak(env):
+    _rate_limits(env, five_hour=100)
+    _stop(env)
+    _rate_limits(env, five_hour=10)
+    _stop(env, now=_NOW + timedelta(minutes=15))
+    assert _lines(env)[-1]['rate_limit_peak'] == {'five_hour': 10}
 
 
 def test_short_gap_reappends_same_stretch_with_totals(env):

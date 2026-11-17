@@ -100,14 +100,35 @@ repeat-o-scope asks --jev
 ## Worklog hook
 
 A Claude Code `Stop` hook that appends one JSON line per stretch of work (a session's activity until a
-15-minute gap) to `<Documents>/worklog/YYYY-MM-DD.jsonl`. A stretch is re-appended with growing totals
-as it goes on, so **readers keep the last line per `@id`**.
+15-minute gap) to `<user data dir>/worklog/YYYY-MM-DD.jsonl` (on Windows
+`%LOCALAPPDATA%\repeat-o-scope\worklog`). A stretch is re-appended with growing totals as it goes on, so
+**readers keep the last line per `@id`**.
 
 Each line records `cwd`, `repo`, `branch`, `started`, `last_stop`, `turns`, `tool_uses`, the files Claude
-edited, your last 10 prompts (cut to 200 characters, credentials redacted) and the transcript path.
+edited, your last 10 prompts (cut to 200 characters, credentials redacted), the transcript path, and the
+rate limits (below).
 
-`repeat-o-scope install` registers it. Set `REPEAT_O_SCOPE_LOG_DIR` to log somewhere other than `<Documents>/worklog`. Per-session state lives in
-`~/.claude/hooks/worklog-state`.
+`repeat-o-scope install` registers it. Set `REPEAT_O_SCOPE_LOG_DIR` to log somewhere else. The default
+used to be `<Documents>/worklog`; it moved because Windows ransomware protection (Controlled Folder Access)
+blocks python and pwsh from writing there. Per-session state lives in `~/.claude/hooks/worklog-state`.
+
+### Rate limits and extra usage
+
+Transcripts don't record whether a turn went to extra usage. Claude Code passes the 5-hour and 7-day
+limits only to the status line (`rate_limits`, claude.ai subscriptions only), so
+[`statusline/statusline.ps1`](statusline/statusline.ps1) writes them to
+`~/.claude/hooks/worklog-state/<session_id>.rate-limits.json`, and the Stop hook copies them into the log:
+
+- `rate_limits`: the status line's latest copy, as Claude Code gave it (`used_percentage`, `resets_at`).
+- `rate_limit_peak`: the highest `used_percentage` per window during the stretch. A window at 100 means
+  the stretch went to extra usage, even if the window reset before the stretch ended.
+
+Both are `null` without that status line. The copy is as fresh as the status line's last refresh, so the
+last response of a stretch can show up only at the next stop.
+
+To use the script as is, point `statusLine` in `~/.claude/settings.json` at it:
+`pwsh -NoProfile -File <repo>/statusline/statusline.ps1`. Besides the limits, it shows the branch's issue and
+MR (via `glab`), context use and the repo or worktree name.
 
 ### Replacing `worklog.ps1`
 

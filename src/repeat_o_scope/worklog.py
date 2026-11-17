@@ -6,8 +6,9 @@ gap of `_GAP` without a Stop. Within a stretch the same @id is re-appended with 
 growing totals, so a reader keeps the LAST line per @id. The log is always current, even
 for sessions that never end.
 
-Output: <log dir>/YYYY-MM-DD.jsonl (date of the stretch's first turn)
+Output: <log dir>/YYYY-MM-DD.jsonl (date of the stretch's first turn; default: the user data dir)
 State:  <state dir>/<session_id>.json (transcript offset, seq, stretch so far)
+Input:  <state dir>/<session_id>.rate-limits.json (the status line's latest `rate_limits`)
 """
 
 import json
@@ -31,6 +32,9 @@ _MAX_PROMPTS = 10
 _MAX_PROMPT_CHARS = 200
 _GIT_TIMEOUT_SECONDS = 5
 _EDIT_TOOLS = frozenset({'Edit', 'Write', 'MultiEdit', 'NotebookEdit'})
+# Written by statusline/statusline.ps1 next to the session's state file.
+_RATE_LIMITS_SUFFIX = '.rate-limits.json'
+_RATE_LIMIT_WINDOWS = ('five_hour', 'seven_day')
 # Tool results, slash-command plumbing and injected reminders.
 _PLUMBING = re.compile(r'^\s*<(command-|local-command|system-reminder)', re.IGNORECASE)
 _CONTEXT = {
@@ -65,11 +69,13 @@ def record_stop(
         seq = state['seq'] + 1 if state else 1
         started = now.isoformat()
         prompts, files, turns, tools = [], [], 0, 0
+        peak = {}
     else:
         seq = state['seq']
         started = state['started']
         prompts, files = list(state['prompts'] or []), list(state['files'] or [])
         turns, tools = state['turns'], state['tool_uses']
+        peak = dict(state.get('rate_limit_peak') or {})
     offset = state['offset'] if state else 0
     branch = state.get('branch') if state else None
 
@@ -113,6 +119,14 @@ def record_stop(
     index = state.get('index') if state else None
     index = index or _next_index(state_dir)
 
+    # Transcripts don't record rate-limit state, so the status line leaves its latest copy here.
+    # A window at 100% means the turns went to extra usage.
+    rate_limits = _read_rate_limits(state_dir / f'{sid}{_RATE_LIMITS_SUFFIX}')
+    for window in _RATE_LIMIT_WINDOWS:
+        used = (rate_limits or {}).get(window, {}).get('used_percentage')
+        if isinstance(used, (int, float)):
+            peak[window] = max(peak.get(window, 0), used)
+
     entry = {
         '@context': _CONTEXT,
         '@id': f'urn:claude-code:session:{sid}#{seq}',
@@ -131,6 +145,8 @@ def record_stop(
         'files': files,
         'prompts': prompts[-_MAX_PROMPTS:],
         'transcript': transcript,
+        'rate_limits': rate_limits,
+        'rate_limit_peak': peak or None,
     }
     day = datetime.fromisoformat(started).strftime('%Y-%m-%d')
     _append(log_dir / f'{day}.jsonl', json.dumps(entry, ensure_ascii=False, separators=(',', ':')) + '\n')
@@ -155,6 +171,18 @@ def _clean(text: str) -> str:
     # Credentials pasted into a prompt must not reach the log (it may live in a synced folder).
     text = redact(re.sub(r'\s+', ' ', text).strip())
     return text[:_MAX_PROMPT_CHARS] + '...' if len(text) > _MAX_PROMPT_CHARS else text
+
+
+def _read_rate_limits(path: Path) -> dict | None:
+    """Returns the status line's last `rate_limits`, or None when absent or half-written."""
+    try:
+        data = json.loads(path.read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    # Keep only well-formed windows, so a stray value never breaks the peak.
+    return {k: v for k, v in data.items() if isinstance(v, dict)} or None
 
 
 def _git(cwd: str, *args: str) -> str | None:
@@ -192,7 +220,8 @@ def _append(path: Path, text: str) -> None:
 
 def main() -> None:
     try:
-        default_log = platformdirs.user_documents_path() / 'worklog'
+        # Not Documents: Windows ransomware protection (Controlled Folder Access) blocks python and pwsh there.
+        default_log = platformdirs.user_data_path('repeat-o-scope', appauthor=False) / 'worklog'
         record_stop(
             hook=json.load(sys.stdin),
             log_dir=Path(os.environ.get('REPEAT_O_SCOPE_LOG_DIR') or default_log),
