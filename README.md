@@ -2,6 +2,9 @@
 
 Logs your Claude Code work, finds the prompts you keep repeating, and helps automate them away.
 
+Most Claude Code tokens go on wasted turns rather than on the work itself: a wrong guess, a retry, a re-read.
+[Why, and the set-up that cuts them](docs/why.md). repeat-o-scope finds those turns in your own transcripts.
+
 ## Install
 
 ```
