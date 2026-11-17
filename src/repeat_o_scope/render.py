@@ -66,23 +66,56 @@ def markdown(report: Report, *, top: int) -> str:
 
 def measurement_markdown(m: Measurement, *, price: float | None) -> str:
     """Returns the measurement as a markdown table, with euros only when `price` is set."""
-    # A long-context turn wastes only its excess context, so it is not counted as a wasted turn.
-    long = m.waste['long_context'].turns
-    wasted = sum(t.turns for t in m.waste.values()) - long
+    header = _measurement_header(price=price)
     lines = [
         '# Wasted turns',
         '',
-        f'_Last {m.days} days: {wasted} of {m.total.turns} turns wasted, '
-        f'and {long} more ran past half their context: '
-        f'{_share(sum(t.weight for t in m.waste.values()), m.total):.1%} of your usage._',
+        f'_{_measurement_headline(m)}_',
         '',
-        '| Kind | Turns | Share of usage | Tokens |' + (' € |' if price is not None else ''),
-        '|---|---:|---:|---:|' + ('---:|' if price is not None else ''),
+        '| ' + ' | '.join(header) + ' |',
+        '|---|' + '---:|' * (len(header) - 1),
     ]
-    for kind, t in m.waste.items():
-        row = f'| {_KIND_LABELS[kind]} | {t.turns} | {_share(t.weight, m.total):.1%} | {t.tokens:,} |'
-        lines.append(row + (f' €{_eur(t, price=price):.2f} |' if price is not None else ''))
+    lines += ['| ' + ' | '.join(row) + ' |' for row in _measurement_rows(m, price=price)]
     return '\n'.join(lines)
+
+
+def measurement_table(m: Measurement, *, price: float | None) -> str:
+    """Returns the measurement as a rich table for a terminal, with euros only when `price` is set."""
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title='Wasted turns', caption=_measurement_headline(m))
+    for i, column in enumerate(_measurement_header(price=price)):
+        table.add_column(column, justify='left' if i == 0 else 'right')
+    for row in _measurement_rows(m, price=price):
+        table.add_row(*row)
+    console = Console()
+    with console.capture() as captured:
+        console.print(table)
+    return captured.get()
+
+
+def _measurement_headline(m: Measurement) -> str:
+    # A long-context turn wastes only its excess context, so it is not counted as a wasted turn.
+    long = m.waste['long_context'].turns
+    wasted = sum(t.turns for t in m.waste.values()) - long
+    share = _share(sum(t.weight for t in m.waste.values()), m.total)
+    return (
+        f'Last {m.days} days: {wasted} of {m.total.turns} turns wasted, '
+        f'and {long} more ran past half their context: {share:.1%} of your usage.'
+    )
+
+
+def _measurement_header(*, price: float | None) -> list[str]:
+    return ['Kind', 'Turns', 'Share of usage', 'Tokens'] + (['€'] if price is not None else [])
+
+
+def _measurement_rows(m: Measurement, *, price: float | None) -> list[list[str]]:
+    return [
+        [_KIND_LABELS[kind], str(t.turns), f'{_share(t.weight, m.total):.1%}', f'{t.tokens:,}']
+        + ([f'€{_eur(t, price=price):.2f}'] if price is not None else [])
+        for kind, t in sorted(m.waste.items(), key=lambda kv: -kv[1].tokens)
+    ]
 
 
 def measurement_json(m: Measurement, *, price: float | None) -> str:
