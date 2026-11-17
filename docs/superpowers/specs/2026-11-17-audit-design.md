@@ -20,6 +20,12 @@ and never `measure`, so fixes get ranked by how often something happens, not by 
    checklist: effort level, `skillOverrides`, enabled skills, status line, scope and read-once rules,
    `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS`, no `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=25` on 200k models. These
    are what turn expired-cache and past-half-context waste, which has no text to group, into fixes.
+   `audit` calls the checks of `repeat-o-scope doctor` (branch `doctor`, PR #13), not a copy of them.
+   Skills with `disable-model-invocation: true` run only as `/name` and cost nothing per turn, so they
+   don't count as enabled. To cut the count, the plan offers two kinds of fix:
+   - Make one of the user's own skills in `~/.claude/skills` a `/command` with that frontmatter line.
+   - Switch off a plugin skill (`superpowers:*`, `egm:*`, ...) with `skillOverrides` or `enabledPlugins`.
+     An edit in the plugin cache is lost on update.
 3. **Judge** (one example per group): is it real or noise, and for asks, which kind. It uses the first
    judge that is available, in this order:
    1. Jev (`TYPESAFE_API_KEY`, or `TYPESAFE_AI_API_KEY` as vainu-data names it), in `audit`.
