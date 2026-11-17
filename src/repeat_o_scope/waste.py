@@ -14,6 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 KINDS = ('refused_edit', 'reread', 'failed', 'denied', 'bare_yes', 'long_context')
 _REFUSED_EDIT = 'has not been read yet'
 _EDITS = frozenset({'Edit', 'Write', 'NotebookEdit'})
+_CONTEXT_WINDOWS = (200_000, 1_000_000)
 # API price ratios against an input token: the best public proxy for how much of a usage limit a call takes.
 _WEIGHTS = {
     'input_tokens': 1.0,
@@ -43,6 +44,7 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     charges: dict[str, str] = {}
     issuer: dict[str, str] = {}
     seen: dict[tuple, set[tuple]] = collections.defaultdict(set)
+    call_context: dict[str, tuple] = {}
     asked: set[tuple] = set()
     go_ahead: set[tuple] = set()
     for e in transcripts.iter_entries(root=root, since=since, subagents=True):
@@ -58,6 +60,7 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
         is_call = e.get('type') == 'assistant' and isinstance(call_id, str) and isinstance(usage, dict)
         if is_call:
             calls.setdefault(call_id, usage)
+            call_context.setdefault(call_id, context)
             asked.add(context)
             if context in go_ahead:
                 go_ahead.discard(context)
@@ -71,6 +74,10 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
                 if (by := issuer.get(block.get('tool_use_id'))) is not None:
                     charges.setdefault(by, _error_kind(transcripts.error_line(block.get('content'))))
     waste = {kind: _tally([calls[c] for c, k in charges.items() if k == kind]) for kind in KINDS}
+    waste['long_context'] = _long_context(
+        {c: (call_context[c], u) for c, u in calls.items() if c not in charges},
+        windows=_windows(calls=calls, call_context=call_context),
+    )
     total = _tally(list(calls.values()))
     _LOGGER.info('Measured `%s` turns, `%s` wasted.', total.turns, len(charges))
     return Measurement(days=days, total=total, waste=waste)
@@ -98,6 +105,28 @@ def _is_reread(block: dict, *, seen: set[tuple]) -> bool:
         return True
     seen.add(read)
     return False
+
+
+def _windows(*, call_context: dict[str, tuple], calls: dict[str, dict]) -> dict[tuple, int]:
+    """Returns each context's window: the smallest that fits its largest call, since transcripts don't say."""
+    largest = collections.defaultdict(int)
+    for call_id, usage in calls.items():
+        largest[call_context[call_id]] = max(largest[call_context[call_id]], _context(usage))
+    return {c: next((w for w in _CONTEXT_WINDOWS if w >= n), _CONTEXT_WINDOWS[-1]) for c, n in largest.items()}
+
+
+def _long_context(uncharged: dict[str, tuple[tuple, dict]], *, windows: dict[tuple, int]) -> Tally:
+    """Returns the tally of the context each call carried above half its window."""
+    turns, tokens, weight = 0, 0, 0.0
+    for context, usage in uncharged.values():
+        if (excess := _context(usage) - windows[context] // 2) > 0:
+            turns, tokens = turns + 1, tokens + excess
+            weight += _weight(usage) * excess / _context(usage)
+    return Tally(turns=turns, tokens=tokens, weight=weight)
+
+
+def _context(usage: dict) -> int:
+    return sum(_count(usage, key) for key in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
 
 
 def _error_kind(error: str) -> str:

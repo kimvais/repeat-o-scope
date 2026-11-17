@@ -134,6 +134,30 @@ def test_go_ahead_in_subagent_or_sdk_run_is_not_counted(transcripts):
     assert _measure(transcripts).waste['bare_yes'].turns == 0
 
 
+def _sized(transcripts, id, context, blocks=()):
+    return _call(transcripts, id=id, blocks=list(blocks), usage={'cache_read_input_tokens': context})
+
+
+def test_call_past_half_of_200k_is_long_context(transcripts):
+    transcripts.write([_sized(transcripts, 'm1', 90_000), _sized(transcripts, 'm2', 130_000)])
+    weight = 13_000 * 30_000 / 130_000
+    assert _measure(transcripts).waste['long_context'] == Tally(turns=1, tokens=30_000, weight=weight)
+
+
+def test_session_past_200k_uses_1m_window(transcripts):
+    transcripts.write([_sized(transcripts, 'm1', 130_000), _sized(transcripts, 'm2', 600_000)])
+    assert _measure(transcripts).waste['long_context'] == Tally(turns=1, tokens=100_000, weight=10_000.0)
+
+
+def test_call_charged_elsewhere_is_not_long_context(transcripts):
+    transcripts.write([
+        _sized(transcripts, 'm1', 130_000, blocks=[_tool_use('u1')]),
+        _result(transcripts, 'u1', 'File has not been read yet. Read it first before writing to it.'),
+    ])
+    m = _measure(transcripts)
+    assert (m.waste['refused_edit'].turns, m.waste['long_context'].turns) == (1, 0), m
+
+
 def test_call_with_two_failures_is_charged_once(transcripts):
     transcripts.write([
         _call(transcripts, id='m1', blocks=[_tool_use('u1'), _tool_use('u2')]),
