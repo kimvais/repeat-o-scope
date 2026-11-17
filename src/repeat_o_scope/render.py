@@ -45,9 +45,14 @@ def json_document(report: Report, *, top: int) -> str:
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'jev': report.jev,
         'totals': report.totals,
-        'findings': [dataclasses.asdict(f) for f in report.findings],
+        'findings': [finding_dict(f) for f in report.findings],
     }
     return json.dumps(doc, ensure_ascii=False, indent=2)
+
+
+def finding_dict(f: Finding) -> dict:
+    """Returns the finding as a dict; `cost` and `share` only when it has them, as only audit findings do."""
+    return {k: v for k, v in dataclasses.asdict(f).items() if v is not None or k not in ('cost', 'share')}
 
 
 def markdown(report: Report, *, top: int) -> str:

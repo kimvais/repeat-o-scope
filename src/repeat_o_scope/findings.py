@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from repeat_o_scope.cluster import Cluster
+from repeat_o_scope.waste import Tally
 
 # Fixed so that a finding keeps its id across runs and machines.
 _NAMESPACE = uuid.UUID('6f2c5b1e-8d4a-4c3e-9a7b-2e1f0d9c8b7a')
@@ -24,11 +25,15 @@ class Variant:
 @dataclass(frozen=True)
 class Finding:
     id: str
-    kind: str  # prompt | command | ask | failure | denial
+    # prompt | command | ask | failure | denial, or a `waste.KINDS` kind in an audit
+    kind: str
     total: int
     variants: list[Variant]
     examples: list[str]
     label: str | None
+    # What the wasted calls behind an audit finding cost, and their share of all usage.
+    cost: Tally | None = None
+    share: float | None = None
 
 
 @dataclass(frozen=True)

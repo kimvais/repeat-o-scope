@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, declined, doctor, findings, install, judge, judges, render, transcripts, waste
+from repeat_o_scope import audit, cluster, declined, doctor, findings, install, judge, judges, render, transcripts, waste
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ class Scope:
         for f in transcripts.iter_tool_failures(root=self._root, since=self._since):
             key = cluster.normalise(f'{f.tool}: {f.error}')
             (denied if transcripts.is_denial(f.error) else failed)[key].append(f)
-        failure_clusters, failure_noise = cluster.rank(_repeated(failed), min_size=_MIN_SIZE)
+        failure_clusters, failure_noise = cluster.rank(audit.repeated(failed), min_size=_MIN_SIZE)
         note, label = '', None
         if self._jev and failure_clusters:
             # One example per group: the first failure behind its most frequent variant.
@@ -167,7 +167,7 @@ class Scope:
             real = judge.real_failures([f'{f.tool}: {f.attempt} → {f.error}' for f in firsts], judge=judged_by)
             note = f'{judged_by.name} judged {sum(not r for r in real)} group(s) as noise on stderr and left them out.'
             failure_clusters, label = [c for c, r in zip(failure_clusters, real) if r], 'real'
-        denial_clusters, denial_noise = cluster.rank(_repeated(denied), min_size=_MIN_SIZE)
+        denial_clusters, denial_noise = cluster.rank(audit.repeated(denied), min_size=_MIN_SIZE)
         originals = {
             k: [f'{f.tool}: {f.attempt} → {f.error}' for f in fs] for k, fs in (failed | denied).items()
         }
@@ -192,29 +192,13 @@ class Scope:
         )
 
     def _clustered(self, name: str, kind: str, texts) -> Report:
-        originals = collections.defaultdict(list)
-        for text in texts:
-            originals[cluster.normalise(text)].append(text)
-        clusters, noise = cluster.rank(_repeated(originals), min_size=_MIN_SIZE)
-        _LOGGER.info('Ranked `%s` %s into `%s` groups.', sum(map(len, originals.values())), name, len(clusters))
-        return Report(
-            name=name,
-            days=self._days,
-            jev=self._jev,
-            totals={'items': sum(map(len, originals.values())), 'groups': len(clusters), 'one_offs': noise},
-            findings=[findings.from_cluster(report=name, kind=kind, cluster=c, originals=originals) for c in clusters],
-        )
+        return audit.clustered(name, kind, texts, days=self._days, jev=self._jev)
 
 
 def _open_judge() -> judges.Judge:
     if (opened := judges.open_judge()) is None:
         raise findings.RepeatOScopeError('No judge available: set a Jev, Gemini or Cloudflare key!')
     return opened
-
-
-def _repeated(groups: dict[str, list]) -> list[str]:
-    """Returns each key once per item behind it, the shape `cluster.rank` counts."""
-    return [k for k, items in groups.items() for _ in items]
 
 
 def main() -> None:
