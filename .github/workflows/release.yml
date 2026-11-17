@@ -15,6 +15,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      # Fail closed: a tag that doesn't match pyproject.toml would publish the wrong version.
+      - run: |
+          version="$(uv version --short)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version in pyproject.toml" >&2
+            exit 1
+          fi
       - run: uv run pytest -q
       - run: uv build
+      # The README's install steps, against the built wheel, before anything reaches PyPI.
+      - run: |
+          uv tool install dist/*.whl
+          repeat-o-scope --help > /dev/null
+          repeat-o-scope install --claude_dir "$RUNNER_TEMP/claude"
+          test -f "$RUNNER_TEMP/claude/skills/repeat-o-scope/SKILL.md"
+          grep -q repeat-o-scope-worklog "$RUNNER_TEMP/claude/settings.json"
       - uses: pypa/gh-action-pypi-publish@release/v1

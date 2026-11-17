@@ -1,7 +1,7 @@
 [project]
 name = "repeat-o-scope"
 version = "0.1.0"
-description = "Logs your Claude Code work, finds the prompts you keep repeating, and helps automate them away."
+description = "Audits your Claude Code transcripts for wasted usage and repeats, and turns them into fixes you approve."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
