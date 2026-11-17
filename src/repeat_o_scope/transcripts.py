@@ -24,6 +24,12 @@ _BASH_INPUT = re.compile(r'^\s*<bash-input>(.*?)</bash-input>', re.IGNORECASE | 
 # Lines that wrap a tool error without saying anything about it.
 _ERROR_WRAPPER = re.compile(r'^(</?tool_use_error>|</?error>|Exit code -?\d+)$')
 _ATTEMPT_KEYS = ('command', 'file_path', 'pattern', 'query', 'skill', 'url', 'prompt')
+# A reply that only says "go on": the turn before it asked for nothing that needed asking.
+_GO_AHEAD = re.compile(
+    r'^(ship|ship it|go|go ahead|go for it|yes|yes please|yes, please|y|ok|okay|do it|do that|push|push it'
+    r'|commit|commit it|commit and push|commit, push and open mr|post|post it|post them|continue|proceed|sure'
+    r'|yep|please do)[.!]*$'
+)
 # Tool calls refused by a person, a hook or the permission classifier: not failures to automate away.
 _DENIED = re.compile(
     r"permission for this action was denied|doesn't want to proceed|denied this in vjuu|hook error|blocked by",
@@ -66,7 +72,7 @@ def iter_turn_ends(*, root: Path, since: datetime) -> Iterator[TurnEnd]:
         if e.get('type') == 'assistant' and not e.get('isSidechain'):
             if line := _last_line(_text(e)):
                 closing[session] = line
-        elif (text := _typed_text(e)) and not _BASH_INPUT.match(text) and session in closing:
+        elif (text := typed_text(e)) and not _BASH_INPUT.match(text) and session in closing:
             yield TurnEnd(closing=redact(closing.pop(session)), reply=redact(text))
 
 
@@ -85,6 +91,11 @@ def iter_tool_failures(*, root: Path, since: datetime) -> Iterator[ToolFailure]:
             elif block.get('type') == 'tool_result' and block.get('is_error'):
                 tool, attempt = attempts.get(block.get('tool_use_id'), ('?', ''))
                 yield ToolFailure(tool=tool, attempt=redact(attempt), error=redact(error_line(block.get('content'))))
+
+
+def is_go_ahead(reply: str) -> bool:
+    """Returns whether a reply only says "go on"."""
+    return bool(_GO_AHEAD.match(re.sub(r'\s+', ' ', reply.lower().strip())))
 
 
 def is_denial(error: str) -> bool:
@@ -112,11 +123,11 @@ def iter_entries(*, root: Path, since: datetime, subagents: bool) -> Iterator[di
 
 def _iter_typed(*, root: Path, since: datetime) -> Iterator[str]:
     for e in iter_entries(root=root, since=since, subagents=False):
-        if text := _typed_text(e):
+        if text := typed_text(e):
             yield text
 
 
-def _typed_text(e: dict) -> str | None:
+def typed_text(e: dict) -> str | None:
     """Returns the text of a message the user typed, or None for anything else."""
     if (
         e.get('type') != 'user'

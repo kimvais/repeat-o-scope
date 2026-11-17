@@ -3,7 +3,6 @@
 import collections
 import dataclasses
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -12,12 +11,6 @@ from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
 
-# A reply that only says "go on": the turn before it asked for nothing that needed asking.
-_GO_AHEAD = re.compile(
-    r'^(ship|ship it|go|go ahead|go for it|yes|yes please|yes, please|y|ok|okay|do it|do that|push|push it'
-    r'|commit|commit it|commit and push|commit, push and open mr|post|post it|post them|continue|proceed|sure'
-    r'|yep|please do)[.!]*$'
-)
 _MIN_SIZE = 4
 _MAX_EXAMPLES = 3
 
@@ -100,7 +93,7 @@ class Scope:
 
     def _report_asks(self) -> Report:
         ends = list(transcripts.iter_turn_ends(root=self._root, since=self._since))
-        wasted = [e for e in ends if _GO_AHEAD.match(re.sub(r'\s+', ' ', e.reply.lower().strip()))]
+        wasted = [e for e in ends if transcripts.is_go_ahead(e.reply)]
         replies = collections.Counter(e.reply.lower().strip() for e in wasted)
         closings = collections.Counter(e.closing for e in wasted)
         if self._jev and closings:

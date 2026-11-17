@@ -107,6 +107,33 @@ def test_subagent_read_is_its_own_context(transcripts):
     assert _measure(transcripts).waste['reread'].turns == 0
 
 
+_NEXT_USAGE = {'input_tokens': 1, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 0, 'output_tokens': 1}
+
+
+def _ask_and_reply(transcripts, reply, *, session='s-1', **extra):
+    return [
+        _call(transcripts, id=f'{session}-1', blocks=[{'type': 'text', 'text': 'Shall I commit?'}], session=session),
+        transcripts.user(reply, session=session, **extra),
+        _call(transcripts, id=f'{session}-2', blocks=[{'type': 'text', 'text': 'Done.'}], usage=_NEXT_USAGE, session=session),
+    ]
+
+
+def test_go_ahead_charges_the_next_call(transcripts):
+    transcripts.write(_ask_and_reply(transcripts, 'yes'))
+    assert _measure(transcripts).waste['bare_yes'] == Tally(turns=1, tokens=2, weight=6.0)
+
+
+def test_real_answer_is_not_bare_yes(transcripts):
+    transcripts.write(_ask_and_reply(transcripts, 'B, because it keeps the API stable'))
+    assert _measure(transcripts).waste['bare_yes'].turns == 0
+
+
+def test_go_ahead_in_subagent_or_sdk_run_is_not_counted(transcripts):
+    transcripts.write(_ask_and_reply(transcripts, 'yes', isSidechain=True), name='side')
+    transcripts.write(_ask_and_reply(transcripts, 'yes', entrypoint='sdk-cli', session='s-2'), name='sdk')
+    assert _measure(transcripts).waste['bare_yes'].turns == 0
+
+
 def test_call_with_two_failures_is_charged_once(transcripts):
     transcripts.write([
         _call(transcripts, id='m1', blocks=[_tool_use('u1'), _tool_use('u2')]),

@@ -43,16 +43,25 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     charges: dict[str, str] = {}
     issuer: dict[str, str] = {}
     seen: dict[tuple, set[tuple]] = collections.defaultdict(set)
+    asked: set[tuple] = set()
+    go_ahead: set[tuple] = set()
     for e in transcripts.iter_entries(root=root, since=since, subagents=True):
         context = (e.get('sessionId'), e.get('agentId'))
         if e.get('isCompactSummary'):
             # Compaction drops what was read, so reading it again is needed.
             seen[context].clear()
+        # Condition copied from `iter_turn_ends`: a reply counts only after Claude said something in that session.
+        if (text := transcripts.typed_text(e)) and context in asked and transcripts.is_go_ahead(text):
+            go_ahead.add(context)
         message = e.get('message') or {}
         call_id, usage = message.get('id'), message.get('usage')
         is_call = e.get('type') == 'assistant' and isinstance(call_id, str) and isinstance(usage, dict)
         if is_call:
             calls.setdefault(call_id, usage)
+            asked.add(context)
+            if context in go_ahead:
+                go_ahead.discard(context)
+                charges.setdefault(call_id, 'bare_yes')
         for block in _blocks(message):
             if block.get('type') == 'tool_use' and is_call:
                 issuer[block.get('id')] = call_id
