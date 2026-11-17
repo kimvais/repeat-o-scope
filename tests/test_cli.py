@@ -68,3 +68,19 @@ def test_fails_report_separates_denials(transcripts):
     assert '4 × edit: file has not been read yet.' in failures, report
     assert '1 denials' in denials, report
     assert "doesn't want to proceed" not in failures, report
+
+
+def test_measure_cli(transcripts, tmp_path):
+    transcripts.write([transcripts.user('ship')])
+    run = subprocess.run(
+        [
+            sys.executable, '-c', 'from repeat_o_scope.cli import main; main()',
+            'measure', f'--root={transcripts.root}', f'--data_dir={tmp_path / "data"}',
+        ],
+        capture_output=True,
+        encoding='utf-8',
+        timeout=120,
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith('# Wasted turns'), run.stdout
+    assert 'Measured' in run.stderr, run.stderr

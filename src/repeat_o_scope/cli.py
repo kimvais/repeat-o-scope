@@ -3,26 +3,14 @@
 import collections
 import dataclasses
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import cluster, declined, findings, install, judge, render, transcripts
+from repeat_o_scope import cluster, declined, findings, install, judge, render, transcripts, waste
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
 
-# A reply that only says "go on": the turn before it asked for nothing that needed asking.
-_GO_AHEAD = re.compile(
-    r'^(ship|ship it|go|go ahead|go for it|yes|yes please|yes, please|y|ok|okay|do it|do that|push|push it'
-    r'|commit|commit it|commit and push|commit, push and open mr|post|post it|post them|continue|proceed|sure'
-    r'|yep|please do)[.!]*$'
-)
-# Tool calls refused by a person, a hook or the permission classifier: not failures to automate away.
-_DENIED = re.compile(
-    r"permission for this action was denied|doesn't want to proceed|denied this in vjuu|hook error|blocked by",
-    re.IGNORECASE,
-)
 _MIN_SIZE = 4
 _MAX_EXAMPLES = 3
 
@@ -38,6 +26,7 @@ class Scope:
         days: int = 30,
         format: str = 'markdown',
         jev: bool = False,
+        price: float | None = None,
         root: str | None = None,
         top: int = 20,
     ):
@@ -53,6 +42,7 @@ class Scope:
         self._days = days
         self._format = format
         self._jev = jev
+        self._price = price
         self._top = top
 
     def prompts(self) -> str:
@@ -70,6 +60,14 @@ class Scope:
     def fails(self) -> str:
         """Tool calls that keep failing, with denials apart."""
         return self._out(self._report_fails)
+
+    def measure(self) -> str:
+        """Turns wasted per kind, and their share of your usage. `--price` adds € per million input tokens."""
+        renderers = {'markdown': render.measurement_markdown, 'json': render.measurement_json}
+        if self._format not in renderers:
+            raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
+        m = waste.measure(days=self._days, root=self._root, since=self._since)
+        return renderers[self._format](m, price=self._price)
 
     def install(self) -> str:
         """Installs the repeat-o-scope skill and the worklog Stop hook into ~/.claude."""
@@ -105,7 +103,7 @@ class Scope:
 
     def _report_asks(self) -> Report:
         ends = list(transcripts.iter_turn_ends(root=self._root, since=self._since))
-        wasted = [e for e in ends if _GO_AHEAD.match(re.sub(r'\s+', ' ', e.reply.lower().strip()))]
+        wasted = [e for e in ends if transcripts.is_go_ahead(e.reply)]
         replies = collections.Counter(e.reply.lower().strip() for e in wasted)
         closings = collections.Counter(e.closing for e in wasted)
         if self._jev and closings:
@@ -146,7 +144,7 @@ class Scope:
         failed, denied = collections.defaultdict(list), collections.defaultdict(list)
         for f in transcripts.iter_tool_failures(root=self._root, since=self._since):
             key = cluster.normalise(f'{f.tool}: {f.error}')
-            (denied if _DENIED.search(f.error) else failed)[key].append(f)
+            (denied if transcripts.is_denial(f.error) else failed)[key].append(f)
         failure_clusters, failure_noise = cluster.rank(_repeated(failed), min_size=_MIN_SIZE)
         note, label = '', None
         if self._jev and failure_clusters:

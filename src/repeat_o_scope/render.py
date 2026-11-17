@@ -6,7 +6,16 @@ import re
 from datetime import datetime, timezone
 
 from repeat_o_scope.findings import Finding, Report
+from repeat_o_scope.waste import Measurement, Tally
 
+_KIND_LABELS = {
+    'refused_edit': 'Refused edits',
+    'reread': 'Re-reads',
+    'failed': 'Failed calls',
+    'denied': 'Denied tools',
+    'bare_yes': 'Bare go-aheads',
+    'long_context': 'Past half context',
+}
 _SHOWN_VARIANTS = 3
 _MAX_SHOWN_CHARS = 120
 _TITLES = {
@@ -53,6 +62,50 @@ def markdown(report: Report, *, top: int) -> str:
             top=top,
         )
     return text
+
+
+def measurement_markdown(m: Measurement, *, price: float | None) -> str:
+    """Returns the measurement as a markdown table, with euros only when `price` is set."""
+    # A long-context turn wastes only its excess context, so it is not counted as a wasted turn.
+    long = m.waste['long_context'].turns
+    wasted = sum(t.turns for t in m.waste.values()) - long
+    lines = [
+        '# Wasted turns',
+        '',
+        f'_Last {m.days} days: {wasted} of {m.total.turns} turns wasted, '
+        f'and {long} more ran past half their context: '
+        f'{_share(sum(t.weight for t in m.waste.values()), m.total):.1%} of your usage._',
+        '',
+        '| Kind | Turns | Share of usage | Tokens |' + (' € |' if price is not None else ''),
+        '|---|---:|---:|---:|' + ('---:|' if price is not None else ''),
+    ]
+    for kind, t in m.waste.items():
+        row = f'| {_KIND_LABELS[kind]} | {t.turns} | {_share(t.weight, m.total):.1%} | {t.tokens:,} |'
+        lines.append(row + (f' €{_eur(t, price=price):.2f} |' if price is not None else ''))
+    return '\n'.join(lines)
+
+
+def measurement_json(m: Measurement, *, price: float | None) -> str:
+    """Returns the measurement as JSON, with `eur` only when `price` is set."""
+    def tally(t: Tally) -> dict:
+        return dataclasses.asdict(t) | ({'eur': round(_eur(t, price=price), 2)} if price is not None else {})
+
+    doc = {
+        'report': 'measure',
+        'days': m.days,
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'total': tally(m.total),
+        'waste': {kind: tally(t) | {'share': _share(t.weight, m.total)} for kind, t in m.waste.items()},
+    }
+    return json.dumps(doc, ensure_ascii=False, indent=2)
+
+
+def _share(weight: float, total: Tally) -> float:
+    return weight / total.weight if total.weight else 0.0
+
+
+def _eur(t: Tally, *, price: float) -> float:
+    return t.weight / 1e6 * price
 
 
 def _section(heading: str, found: list[Finding], *, days: int, note: str, summary: str, top: int) -> str:
