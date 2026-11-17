@@ -14,6 +14,7 @@ _KIND_LABELS = {
     'failed': 'Failed calls',
     'denied': 'Denied tools',
     'bare_yes': 'Bare go-aheads',
+    'cache_rebuild': 'Expired cache',
     'long_context': 'Past half context',
 }
 _SHOWN_VARIANTS = 3
@@ -96,13 +97,13 @@ def measurement_table(m: Measurement, *, price: float | None) -> str:
 
 
 def _measurement_headline(m: Measurement) -> str:
-    # A long-context turn wastes only its excess context, so it is not counted as a wasted turn.
-    long = m.waste['long_context'].turns
-    wasted = sum(t.turns for t in m.waste.values()) - long
+    # Long-context and rebuild turns waste only part of a call, so they are not counted as wasted turns.
+    long, rebuilt = m.waste['long_context'].turns, m.waste['cache_rebuild'].turns
+    wasted = sum(t.turns for t in m.waste.values()) - long - rebuilt
     share = _share(sum(t.weight for t in m.waste.values()), m.total)
     return (
         f'Last {m.days} days: {wasted} of {m.total.turns} turns wasted, '
-        f'and {long} more ran past half their context: {share:.1%} of your usage.'
+        f'{rebuilt} more rebuilt an expired cache and {long} ran past half their context: {share:.1%} of your usage.'
     )
 
 
