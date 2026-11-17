@@ -79,10 +79,19 @@ def _waste_findings(m: Measurement, *, kind: str) -> list[Finding]:
     behind: dict[str, list[Charge]] = collections.defaultdict(list)
     for c in m.charges:
         if c.kind == kind:
-            behind[cluster.normalise(c.evidence)].append(c)
+            # A re-read's evidence is its path, which normalising would turn into `<path>` for every file.
+            behind[c.evidence if kind == 'reread' else cluster.normalise(c.evidence)].append(c)
     if not behind:
         return []
-    clusters, _ = cluster.rank(repeated(behind), min_size=_MIN_WASTE_SIZE)
+    if kind == 'reread':
+        # The same file, not a similar one: no embeddings.
+        clusters = [
+            cluster.Cluster(total=len(cs), variants=[(path, len(cs))])
+            for path, cs in sorted(behind.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+            if len(cs) >= _MIN_WASTE_SIZE
+        ]
+    else:
+        clusters, _ = cluster.rank(repeated(behind), min_size=_MIN_WASTE_SIZE)
     grouped = {text for c in clusters for text, _ in c.variants}
     rest = sorted(((t, len(cs)) for t, cs in behind.items() if t not in grouped), key=lambda v: (-v[1], v[0]))
     groups = [(c.variants, c.variants[0][0]) for c in clusters]
@@ -112,8 +121,11 @@ def _finding(*, behind: dict[str, list[Charge]], kind: str, top: str, total: Tal
 
 def _judged(found: list[Finding], *, by: judges.Judge) -> tuple[list[Finding], str]:
     """Returns the findings with failed-call noise dropped and go-aheads labelled, and a note on what was dropped."""
-    failed = [f for f in found if f.kind == 'failed']
-    asks = [f for f in found if f.kind == 'bare_yes']
+    # A rest group of several texts mixes unrelated calls, so one example can't speak for it: keep it unlabelled.
+    rest = {findings.finding_id(report='audit', top_variant=f'{kind}:*') for kind in waste.KINDS}
+    judged = [f for f in found if f.id not in rest or len(f.variants) == 1]
+    failed = [f for f in judged if f.kind == 'failed']
+    asks = [f for f in judged if f.kind == 'bare_yes']
     real = judge.real_failures([f.examples[0] for f in failed], judge=by) if failed else []
     kinds = judge.kinds_of_asks([f.examples[0] for f in asks], judge=by) if asks else []
     labels = {f.id: 'real' for f, r in zip(failed, real) if r} | {f.id: k for f, k in zip(asks, kinds)}

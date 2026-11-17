@@ -44,6 +44,9 @@ class Judge(abc.ABC):
             raise RepeatOScopeError(f'Judge `{self.name}` failed: {err}') from err
         if set(answers) != set(questions):
             raise RepeatOScopeError(f'Judge `{self.name}` answered `{sorted(answers)}`, asked `{sorted(questions)}`!')
+        for key, question in questions.items():
+            if not _answers(question, answers[key]):
+                raise RepeatOScopeError(f'Judge `{self.name}` gave no usable answer to `{key}`: `{answers[key]}`!')
         return answers
 
     @abc.abstractmethod
@@ -194,6 +197,15 @@ async def _probe(judge: Judge) -> None:
 
     async with judge:
         await judge.ask(state={'a': 2, 'b': 1}, questions={'probe': Noul(instructions='Is `a` greater than `b`?')})
+
+
+def _answers(question, answer: Answer) -> bool:
+    """Returns whether `answer` is a probability for a noul, or one of the criteria for a choice."""
+    from typesafe_sdk import Noul
+
+    if isinstance(question, Noul):
+        return isinstance(answer.noul, (int, float))
+    return answer.choice in question.criteria
 
 
 def _to_wire(question) -> dict:

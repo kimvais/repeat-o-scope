@@ -171,3 +171,20 @@ def test_audit_markdown_leads_with_the_headline(transcripts, tmp_path, no_judge)
         '_Last 30 days: 2 of 2 turns wasted, 0 more rebuilt an expired cache and 0 ran past half their context: 100.0% of your usage._',
     ]
     assert '1. **100.0%** failed, 2 turns: edit: <path> → boom' in text, text
+
+
+def test_rest_group_is_never_judged_away(transcripts, tmp_path, monkeypatch):
+    monkeypatch.setattr(judges, 'open_judge', _Judge)
+    transcripts.write(_failed(transcripts, 1, error='Exit code 1\nwarning: one') + _failed(transcripts, 2, error='Exit code 1\nzz real two', path='C:\\z.py'))
+    a = _run(transcripts, tmp_path)
+    assert [(f.kind, f.total) for f in _waste(a)] == [('failed', 2)]
+
+
+def test_rereads_group_per_file(transcripts, tmp_path, no_judge):
+    def read(i, path):
+        call = transcripts.assistant([{'type': 'tool_use', 'id': f'r{i}', 'name': 'Read', 'input': {'file_path': path}}])
+        call['message'] |= {'id': f'r{i}', 'usage': _SMALL}
+        return call
+
+    transcripts.write([read(i, 'C:\\a.py') for i in range(3)] + [read(i, 'C:\\b.py') for i in range(3, 6)])
+    assert sorted(f.variants[0].text for f in _waste(_run(transcripts, tmp_path))) == ['C:\\a.py', 'C:\\b.py']

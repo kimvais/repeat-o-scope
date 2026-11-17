@@ -318,3 +318,8 @@ def test_call_with_two_failures_is_charged_once(transcripts):
         _result(transcripts, 'u2', 'Exit code 1\nboom'),
     ])
     assert _measure(transcripts).waste['failed'].turns == 1
+
+
+def test_notebook_reread_does_not_crash(transcripts):
+    transcripts.write([_read(transcripts, f'm{i}', notebook_path='C:\\n.ipynb') for i in (1, 2)])
+    assert [(c.kind, c.evidence) for c in _measure(transcripts).charges] == [('reread', 'C:\\n.ipynb')]

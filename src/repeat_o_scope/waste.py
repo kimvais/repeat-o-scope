@@ -110,7 +110,8 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
                 tool_input = block.get('input')
                 issuer[block.get('id')] = (call_id, f'{block.get("name") or "?"}: {transcripts.attempt(tool_input)}')
                 if _is_reread(block, seen=seen[context]):
-                    charges.setdefault(call_id, ('reread', tool_input['file_path']))
+                    path = tool_input.get('file_path') or tool_input.get('notebook_path')
+                    charges.setdefault(call_id, ('reread', path))
             elif block.get('type') == 'tool_result' and block.get('is_error'):
                 if (by := issuer.get(block.get('tool_use_id'))) is not None:
                     error = transcripts.error_line(block.get('content'))

@@ -28,7 +28,7 @@ def http(monkeypatch):
 
         def reply(self, request):
             body = json.loads(request.content)
-            answers = {k: {'type': 'noul', 'noul': 0.9, 'confidence': 0.8} for k in body['questions']}
+            answers = {k: {'choice': next(iter(q['criteria']))} if q['type'] == 'choice' else {'noul': 0.9} for k, q in body['questions'].items()}
             doc = {'answers': answers} if 'input' in body else {'result': {'answers': answers}}
             return httpx2.Response(self.status, json=doc)
 
@@ -117,11 +117,27 @@ def test_wire_format(monkeypatch, http, judge_class, env, url, header, body):
     answers = asyncio.run(_ask(judge_class()))
     request = http.requests[-1]
     assert (str(request.url), request.headers[header[0]], json.loads(request.content)) == (url, header[1], body)
-    assert answers == {'kind': Answer(choice=None, noul=0.9), 'real': Answer(choice=None, noul=0.9)}
+    assert answers == {'kind': Answer(choice='a', noul=None), 'real': Answer(choice=None, noul=0.9)}
 
 
 def test_missing_answer_raises_naming_the_judge(monkeypatch, http):
     monkeypatch.setenv('GEMINI_API_KEY', 'g')
     http.reply = lambda request: httpx2.Response(200, json={'answers': {'real': {'noul': 0.9}}})
     with pytest.raises(RepeatOScopeError, match='gemini-decision-1'):
+        asyncio.run(_ask(judges._Gemini()))
+
+
+@pytest.mark.parametrize('answer', [{'real': {'choice': None}}, {'real': {'noul': None}}])
+def test_null_noul_raises_naming_the_judge(monkeypatch, http, answer):
+    monkeypatch.setenv('GEMINI_API_KEY', 'g')
+    http.reply = lambda request: httpx2.Response(200, json={'answers': {'kind': {'choice': 'a'}} | answer})
+    with pytest.raises(RepeatOScopeError, match='gemini-decision-1'):
+        asyncio.run(_ask(judges._Gemini()))
+
+
+def test_choice_outside_criteria_raises(monkeypatch, http):
+    monkeypatch.setenv('GEMINI_API_KEY', 'g')
+    doc = {'answers': {'kind': {'choice': 'zzz'}, 'real': {'noul': 0.9}}}
+    http.reply = lambda request: httpx2.Response(200, json=doc)
+    with pytest.raises(RepeatOScopeError, match='zzz'):
         asyncio.run(_ask(judges._Gemini()))
