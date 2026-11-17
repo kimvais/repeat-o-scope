@@ -96,7 +96,9 @@ repeat-o-scope doctor     # your settings and CLAUDE.md against the checklist in
 
 - **Effort:** `effortLevel`, top-level or per model under `modelSettings`, is `low` or `medium`.
 - **Skill overrides:** `skillOverrides` turns at least one skill `off`.
-- **Enabled skills:** at most 30, counted from `~/.claude/skills`, `.claude/skills` and enabled plugins.
+- **Enabled skills:** at most 30, counted from `~/.claude/skills`, `.claude/skills` and enabled plugins. A
+  plugin skill is off only as `plugin:skill` in `skillOverrides`. A skill with `disable-model-invocation: true`
+  runs only as a `/command`, keeps its description out of context and isn't counted.
 - **Status line:** `statusLine` runs a command.
 - **Scope rule** and **read-once rule:** a `CLAUDE.md` (`~/.claude/`, the current directory or its `.claude/`)
   has them, matched by their key phrases.

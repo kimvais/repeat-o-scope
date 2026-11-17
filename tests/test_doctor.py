@@ -67,10 +67,10 @@ def test_effort_high_fails(dirs):
     assert _checks(dirs)['effort'] == Check('effort', False, f'high ({path})', 'Set effort to medium in /config.')
 
 
-def _skill(directory, name):
+def _skill(directory, name, *, frontmatter=''):
     path = directory / name / 'SKILL.md'
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f'---\nname: {name}\n---\n', encoding='utf-8')
+    path.write_text(f'---\nname: {name}\n{frontmatter}---\n', encoding='utf-8')
 
 
 def _plugins(claude_dir, plugins: dict[str, tuple]):
@@ -117,6 +117,28 @@ def test_skills_counted_from_user_project_and_enabled_plugins(dirs):
 def test_overridden_skills_are_not_counted(dirs):
     _skill_setup(dirs, overrides={'mine': 'off', 'sp:plan': 'off'})
     assert _checks(dirs)['skills'].found == 'at least 4 enabled'
+
+
+def test_bare_override_does_not_turn_off_a_plugin_skill(dirs):
+    # A plugin skill is listed as `plugin:skill`; `"vjuu": "off"` left `vjuu:vjuu` enabled.
+    _skill_setup(dirs, overrides={'plan': 'off'})
+    assert _checks(dirs)['skills'].found == 'at least 6 enabled'
+
+
+@pytest.mark.parametrize('flag', ['disable-model-invocation: true\n', 'disable-model-invocation: "true"\n'])
+def test_command_only_skills_are_not_counted(dirs, flag):
+    claude_dir = dirs[0]
+    _skill(claude_dir / 'skills', 'news', frontmatter=flag)
+    _skill(claude_dir / 'skills', 'next')
+    _skill(claude_dir / 'skills', 'off', frontmatter='disable-model-invocation: false\n')
+    assert _checks(dirs)['skills'].found == 'at least 2 enabled'
+
+
+def test_flag_in_body_does_not_count(dirs):
+    path = dirs[0] / 'skills' / 'doc' / 'SKILL.md'
+    path.parent.mkdir(parents=True)
+    path.write_text('---\nname: doc\n---\nSet `disable-model-invocation: true` to hide a skill.\n', encoding='utf-8')
+    assert _checks(dirs)['skills'].found == 'at least 1 enabled'
 
 
 def test_more_than_max_skills_fails(dirs):
