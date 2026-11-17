@@ -68,6 +68,45 @@ def test_tool_errors_are_charged_to_one_kind(transcripts):
     assert _zero(m, but=('refused_edit', 'denied', 'failed')) == {}, m
 
 
+def _read(transcripts, id, **tool_input):
+    return _call(transcripts, id=id, blocks=[_tool_use(f'u-{id}', name='Read', **tool_input)])
+
+
+def test_second_read_is_a_reread(transcripts):
+    transcripts.write([_read(transcripts, 'm1'), _read(transcripts, 'm2')])
+    assert _measure(transcripts).waste['reread'] == Tally(turns=1, tokens=_TOKENS, weight=_WEIGHT)
+
+
+def test_read_after_edit_is_not_a_reread(transcripts):
+    edit = _call(transcripts, id='m2', blocks=[_tool_use('u-e', name='Edit', file_path='C:\\a.py')])
+    transcripts.write([_read(transcripts, 'm1'), edit, _read(transcripts, 'm3')])
+    assert _measure(transcripts).waste['reread'].turns == 0
+
+
+def test_read_after_compaction_is_not_a_reread(transcripts):
+    summary = transcripts.user(
+        'This session is being continued from a previous conversation that ran out of context.',
+        isCompactSummary=True,
+    )
+    transcripts.write([_read(transcripts, 'm1'), summary, _read(transcripts, 'm2')])
+    assert _measure(transcripts).waste['reread'].turns == 0
+
+
+def test_reads_of_different_ranges_are_not_rereads(transcripts):
+    transcripts.write([
+        _read(transcripts, 'm1', file_path='C:\\a.py', offset=1, limit=100),
+        _read(transcripts, 'm2', file_path='C:\\a.py', offset=101, limit=100),
+    ])
+    assert _measure(transcripts).waste['reread'].turns == 0
+
+
+def test_subagent_read_is_its_own_context(transcripts):
+    transcripts.write([_read(transcripts, 'm1')])
+    sub = _call(transcripts, id='m2', blocks=[_tool_use('u-s', name='Read')], agentId='a1', isSidechain=True)
+    transcripts.write([sub], subagent=True)
+    assert _measure(transcripts).waste['reread'].turns == 0
+
+
 def test_call_with_two_failures_is_charged_once(transcripts):
     transcripts.write([
         _call(transcripts, id='m1', blocks=[_tool_use('u1'), _tool_use('u2')]),

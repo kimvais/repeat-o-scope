@@ -1,5 +1,6 @@
 """Measures wasted turns: API calls spent on errors, re-reads, go-aheads and an overfull context."""
 
+import collections
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 KINDS = ('refused_edit', 'reread', 'failed', 'denied', 'bare_yes', 'long_context')
 _REFUSED_EDIT = 'has not been read yet'
+_EDITS = frozenset({'Edit', 'Write', 'NotebookEdit'})
 # API price ratios against an input token: the best public proxy for how much of a usage limit a call takes.
 _WEIGHTS = {
     'input_tokens': 1.0,
@@ -40,7 +42,12 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     calls: dict[str, dict] = {}
     charges: dict[str, str] = {}
     issuer: dict[str, str] = {}
+    seen: dict[tuple, set[tuple]] = collections.defaultdict(set)
     for e in transcripts.iter_entries(root=root, since=since, subagents=True):
+        context = (e.get('sessionId'), e.get('agentId'))
+        if e.get('isCompactSummary'):
+            # Compaction drops what was read, so reading it again is needed.
+            seen[context].clear()
         message = e.get('message') or {}
         call_id, usage = message.get('id'), message.get('usage')
         is_call = e.get('type') == 'assistant' and isinstance(call_id, str) and isinstance(usage, dict)
@@ -49,6 +56,8 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
         for block in _blocks(message):
             if block.get('type') == 'tool_use' and is_call:
                 issuer[block.get('id')] = call_id
+                if _is_reread(block, seen=seen[context]):
+                    charges.setdefault(call_id, 'reread')
             elif block.get('type') == 'tool_result' and block.get('is_error'):
                 if (by := issuer.get(block.get('tool_use_id'))) is not None:
                     charges.setdefault(by, _error_kind(transcripts.error_line(block.get('content'))))
@@ -62,6 +71,24 @@ def _blocks(message: dict) -> Iterator[dict]:
     content = message.get('content')
     if isinstance(content, list):
         yield from (b for b in content if isinstance(b, dict))
+
+
+def _is_reread(block: dict, *, seen: set[tuple]) -> bool:
+    """Returns whether a tool call reads a range already read in this context; edits make a file new again."""
+    tool_input = block.get('input') if isinstance(block.get('input'), dict) else {}
+    path = tool_input.get('file_path') or tool_input.get('notebook_path')
+    if not isinstance(path, str):
+        return False
+    if block.get('name') in _EDITS:
+        seen.difference_update({r for r in seen if r[0] == path})
+        return False
+    if block.get('name') != 'Read':
+        return False
+    read = (path, tool_input.get('offset'), tool_input.get('limit'))
+    if read in seen:
+        return True
+    seen.add(read)
+    return False
 
 
 def _error_kind(error: str) -> str:
