@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -10,7 +11,20 @@ from repeat_o_scope.install import load_settings
 
 _LOGGER = logging.getLogger(__name__)
 
-CHECKS = ('effort', 'skill_overrides', 'skills', 'status_line', 'scope_rule', 'read_once_rule')
+CHECKS = (
+    'effort',
+    'skill_overrides',
+    'skills',
+    'status_line',
+    'scope_rule',
+    'read_once_rule',
+    'idle_compact',
+    'autocompact_override',
+)
+# The compaction checks follow https://github.com/inevolin/claude-code-usage-analysis.
+_IDLE_COMPACT = 'CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS'
+_IDLE_COMPACT_MAX = 100_000
+_AUTOCOMPACT_PCT = 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'
 _LOW_EFFORT = {'low', 'medium'}
 # docs/why.md gives no number; above this, skill descriptions are a noticeable fixed cost per turn.
 _MAX_SKILLS = 30
@@ -45,6 +59,8 @@ def diagnose(*, claude_dir: Path, project_dir: Path) -> list[Check]:
         'skill_overrides': _skill_overrides(layers),
         'skills': _skills(claude_dir=claude_dir, layers=layers, project_dir=project_dir),
         'status_line': _status_line(layers),
+        'idle_compact': _idle_compact(layers),
+        'autocompact_override': _autocompact_override(layers),
     }
     claude_mds = [claude_dir / 'CLAUDE.md', project_dir / 'CLAUDE.md', project_dir / '.claude' / 'CLAUDE.md']
     texts = [(p, p.read_text(encoding='utf-8-sig', errors='replace')) for p in claude_mds if p.exists()]
@@ -112,6 +128,49 @@ def _status_line(layers: list[tuple[Path, dict]]) -> Check:
             # The file, not the command: a command line may carry a token.
             return Check('status_line', True, _shown(path), '')
     return Check('status_line', False, 'not set', 'Add context % and usage % to your status line.')
+
+
+def _idle_compact(layers: list[tuple[Path, dict]]) -> Check:
+    # Idle compact runs only below the 200,000 default if this is lowered; it needs the 1-hour cache of a subscription.
+    fix = f'If you take long breaks with the terminal open, set {_IDLE_COMPACT}={_IDLE_COMPACT_MAX} in settings.json env.'
+    if (env := _env(layers, name=_IDLE_COMPACT)) is None:
+        return Check('idle_compact', False, 'not set', fix)
+    value, source = env
+    ok = value is not None and value <= _IDLE_COMPACT_MAX
+    return Check('idle_compact', ok, f'{"set" if value is None else value} ({source})', '' if ok else fix)
+
+
+def _autocompact_override(layers: list[tuple[Path, dict]]) -> Check:
+    if (env := _env(layers, name=_AUTOCOMPACT_PCT)) is None:
+        return Check('autocompact_override', True, 'not set', '')
+    value, source = env
+    model = next((s['model'] for _, s in layers if isinstance(s.get('model'), str)), '')
+    # `[1m]` is how Claude Code names a 1M-context model; anything else is taken as 200k.
+    ok = model.lower().endswith('[1m]')
+    fix = (
+        f'Remove {_AUTOCOMPACT_PCT}: on a 200k-context model it compacts below what a summary leaves, '
+        'and the session thrashes.'
+    )
+    return Check('autocompact_override', ok, f'{"set" if value is None else value} ({source})', '' if ok else fix)
+
+
+def _env(layers: list[tuple[Path, dict]], *, name: str) -> tuple[int | None, str] | None:
+    """Returns a variable's value, `None` unless it is an int, and where it was set; `None` if unset."""
+    # Only an int is shown: `env` holds secrets, and a value that isn't a number may be one.
+    for path, settings in layers:
+        env = settings.get('env')
+        if isinstance(env, dict) and name in env:
+            return _int(env[name]), _shown(path)
+    if name in os.environ:
+        return _int(os.environ[name]), 'environment'
+    return None
+
+
+def _int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _install_paths(claude_dir: Path) -> dict[str, str]:

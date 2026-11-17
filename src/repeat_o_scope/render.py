@@ -16,6 +16,8 @@ _CHECK_LABELS = {
     'status_line': 'Status line',
     'scope_rule': 'Scope rule',
     'read_once_rule': 'Read-once rule',
+    'idle_compact': 'Idle compact',
+    'autocompact_override': 'Auto-compact override',
 }
 _KIND_LABELS = {
     'refused_edit': 'Refused edits',

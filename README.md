@@ -100,6 +100,14 @@ repeat-o-scope doctor     # your settings and CLAUDE.md against the checklist in
 - **Status line:** `statusLine` runs a command.
 - **Scope rule** and **read-once rule:** a `CLAUDE.md` (`~/.claude/`, the current directory or its `.claude/`)
   has them, matched by their key phrases.
+- **Idle compact:** `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` is at most 100000, so idle compact runs on ordinary
+  sessions during long breaks with the terminal open.
+- **Auto-compact override:** no `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`, unless the model is a 1M one (`opus[1m]`).
+  On 200k it compacts below what a summary leaves.
+
+The two compaction checks follow
+[claude-code-usage-analysis](https://github.com/inevolin/claude-code-usage-analysis). They read `env` in
+the settings files, then your environment.
 
 It prints a table for the terminal; `--format markdown` or `--format json` gives agents plain text. It never
 writes anything and never prints settings values it doesn't check. Caveats:

@@ -33,12 +33,12 @@ def _checks(dirs) -> dict[str, Check]:
     return {c.name: c for c in doctor.diagnose(claude_dir=claude_dir, project_dir=project_dir)}
 
 
-def test_fresh_install_fails_every_check(dirs):
+def test_fresh_install_fails_every_check(dirs, no_compact_env):
     checks = doctor.diagnose(claude_dir=dirs[0], project_dir=dirs[1])
     assert sorted(c.name for c in checks) == sorted(doctor.CHECKS), checks
-    # No skills at all is under the limit: there is nothing to turn off.
-    assert [c.name for c in checks if c.ok] == ['skills'], checks
-    assert checks[-1].name == 'skills', checks
+    # No skills is under the limit, and no override is the safe default: neither has anything to fix.
+    assert [c.name for c in checks[-2:]] == ['skills', 'autocompact_override'], checks
+    assert not any(c.ok for c in checks[:-2]), checks
     assert all(c.fix for c in checks if not c.ok), checks
 
 
@@ -185,6 +185,61 @@ def test_rule_words_apart_do_not_match(dirs):
     (dirs[0] / 'CLAUDE.md').write_text('Read the docs. Scope it down. Do it once.', encoding='utf-8')
     checks = _checks(dirs)
     assert (checks['scope_rule'].ok, checks['read_once_rule'].ok) == (False, False), checks
+
+
+_IDLE = 'CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS'
+_PCT = 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE'
+
+
+@pytest.fixture
+def no_compact_env(monkeypatch):
+    monkeypatch.delenv(_IDLE, raising=False)
+    monkeypatch.delenv(_PCT, raising=False)
+
+
+def test_idle_compact_unset_fails(dirs, no_compact_env):
+    assert _checks(dirs)['idle_compact'] == Check(
+        'idle_compact',
+        False,
+        'not set',
+        f'If you take long breaks with the terminal open, set {_IDLE}=100000 in settings.json env.',
+    )
+
+
+def test_idle_compact_100k_passes(dirs, no_compact_env):
+    path = _settings(dirs[0] / 'settings.json', {'env': {_IDLE: '100000'}})
+    assert _checks(dirs)['idle_compact'] == Check('idle_compact', True, f'100000 ({path})', '')
+
+
+def test_idle_compact_from_process_env(dirs, no_compact_env, monkeypatch):
+    monkeypatch.setenv(_IDLE, '100000')
+    assert _checks(dirs)['idle_compact'] == Check('idle_compact', True, '100000 (environment)', '')
+
+
+def test_autocompact_override_unset_passes(dirs, no_compact_env):
+    assert _checks(dirs)['autocompact_override'] == Check('autocompact_override', True, 'not set', '')
+
+
+def test_autocompact_override_on_200k_fails(dirs, no_compact_env):
+    path = _settings(dirs[0] / 'settings.json', {'model': 'opus', 'env': {_PCT: '25'}})
+    assert _checks(dirs)['autocompact_override'] == Check(
+        'autocompact_override',
+        False,
+        f'25 ({path})',
+        f'Remove {_PCT}: on a 200k-context model it compacts below what a summary leaves, and the session thrashes.',
+    )
+
+
+def test_autocompact_override_on_1m_passes(dirs, no_compact_env):
+    _settings(dirs[0] / 'settings.json', {'model': 'opus[1m]', 'env': {_PCT: '25'}})
+    assert _checks(dirs)['autocompact_override'].ok
+
+
+def test_non_numeric_env_value_is_not_printed(dirs, no_compact_env):
+    path = _settings(dirs[0] / 'settings.json', {'env': {_IDLE: 'sekrit', _PCT: 'sekrit'}})
+    checks = _checks(dirs)
+    assert checks['idle_compact'].found == f'set ({path})', checks
+    assert 'sekrit' not in repr(checks), checks
 
 
 def test_local_settings_override_user(dirs):
