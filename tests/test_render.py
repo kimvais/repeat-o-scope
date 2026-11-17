@@ -137,3 +137,14 @@ def test_measure_headline_counts_long_context_apart():
     )
     text = render.measurement_markdown(m, price=None)
     assert '_Last 30 days: 10 of 100 turns wasted, and 40 more ran past half their context: 10.0% of your usage._' in text, text
+
+
+def test_measure_default_is_a_rich_table(transcripts):
+    text = cli.Scope(root=str(transcripts.root)).measure()
+    assert 'Refused edits' in text and '|---' not in text and '# Wasted turns' not in text, text
+    assert '─' in text, text
+
+
+def test_measure_markdown_on_request(transcripts):
+    text = cli.Scope(root=str(transcripts.root), format='markdown').measure()
+    assert text.startswith('# Wasted turns'), text

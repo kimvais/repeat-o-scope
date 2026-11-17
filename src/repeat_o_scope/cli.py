@@ -24,7 +24,7 @@ class Scope:
         claude_dir: str | None = None,
         data_dir: str | None = None,
         days: int = 30,
-        format: str = 'markdown',
+        format: str | None = None,
         jev: bool = False,
         price: float | None = None,
         root: str | None = None,
@@ -63,7 +63,12 @@ class Scope:
 
     def measure(self) -> str:
         """Turns wasted per kind, and their share of your usage. `--price` adds € per million input tokens."""
-        renderers = {'markdown': render.measurement_markdown, 'json': render.measurement_json}
+        # No --format means a person at a terminal; agents ask for markdown or json.
+        renderers = {
+            None: render.measurement_table,
+            'markdown': render.measurement_markdown,
+            'json': render.measurement_json,
+        }
         if self._format not in renderers:
             raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
         m = waste.measure(days=self._days, root=self._root, since=self._since)
@@ -83,7 +88,7 @@ class Scope:
         return f'Declined `{finding_id}`: {", ".join(variants)}'
 
     def _out(self, build) -> str:
-        renderers = {'markdown': render.markdown, 'json': render.json_document}
+        renderers = {None: render.markdown, 'markdown': render.markdown, 'json': render.json_document}
         if self._format not in renderers:
             raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
         report = build()

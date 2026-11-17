@@ -82,5 +82,6 @@ def test_measure_cli(transcripts, tmp_path):
         timeout=120,
     )
     assert run.returncode == 0, run.stderr
-    assert run.stdout.startswith('# Wasted turns'), run.stdout
+    assert 'Wasted turns' in run.stdout and 'Refused edits' in run.stdout, run.stdout
+    assert '|---' not in run.stdout, run.stdout
     assert 'Measured' in run.stderr, run.stderr

@@ -70,7 +70,8 @@ How it works:
 - **Bare go-aheads:** the turn that answers a bare "yes" / "ship" / "go", the same replies `asks` counts.
 - **Past half context:** the context a call carried above half its window, on calls not charged to another kind.
 
-The headline is the wasted share of your usage. Raw tokens are a secondary column, and `--price 3.0` adds €,
+It prints a table for the terminal. `--format markdown` or `--format json` gives agents plain text. The
+headline is the wasted share of your usage. Raw tokens are a secondary column, and `--price 3.0` adds €,
 priced per million input tokens. Caveats:
 - Your usage limit isn't in the transcripts, so the share is the share of what you used, not of the limit.
 - Tokens are weighted by API price ratios: cache writes 1.25, cache reads 0.1 and output 5 times an input
