@@ -24,6 +24,11 @@ _BASH_INPUT = re.compile(r'^\s*<bash-input>(.*?)</bash-input>', re.IGNORECASE | 
 # Lines that wrap a tool error without saying anything about it.
 _ERROR_WRAPPER = re.compile(r'^(</?tool_use_error>|</?error>|Exit code -?\d+)$')
 _ATTEMPT_KEYS = ('command', 'file_path', 'pattern', 'query', 'skill', 'url', 'prompt')
+# Tool calls refused by a person, a hook or the permission classifier: not failures to automate away.
+_DENIED = re.compile(
+    r"permission for this action was denied|doesn't want to proceed|denied this in vjuu|hook error|blocked by",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -56,7 +61,7 @@ def iter_commands(*, root: Path, since: datetime) -> Iterator[str]:
 def iter_turn_ends(*, root: Path, since: datetime) -> Iterator[TurnEnd]:
     """Yields Claude's closing line of each turn together with the user's reply."""
     closing = {}
-    for e in _iter_entries(root=root, since=since, subagents=False):
+    for e in iter_entries(root=root, since=since, subagents=False):
         session = e.get('sessionId')
         if e.get('type') == 'assistant' and not e.get('isSidechain'):
             if line := _last_line(_text(e)):
@@ -68,7 +73,7 @@ def iter_turn_ends(*, root: Path, since: datetime) -> Iterator[TurnEnd]:
 def iter_tool_failures(*, root: Path, since: datetime) -> Iterator[ToolFailure]:
     """Yields every failed tool call, subagents included, with what was attempted."""
     attempts = {}
-    for e in _iter_entries(root=root, since=since, subagents=True):
+    for e in iter_entries(root=root, since=since, subagents=True):
         content = (e.get('message') or {}).get('content')
         if not isinstance(content, list):
             continue
@@ -79,10 +84,15 @@ def iter_tool_failures(*, root: Path, since: datetime) -> Iterator[ToolFailure]:
                 attempts[block.get('id')] = (block.get('name') or '?', _attempt(block.get('input')))
             elif block.get('type') == 'tool_result' and block.get('is_error'):
                 tool, attempt = attempts.get(block.get('tool_use_id'), ('?', ''))
-                yield ToolFailure(tool=tool, attempt=redact(attempt), error=redact(_error_line(block.get('content'))))
+                yield ToolFailure(tool=tool, attempt=redact(attempt), error=redact(error_line(block.get('content'))))
 
 
-def _iter_entries(*, root: Path, since: datetime, subagents: bool) -> Iterator[dict]:
+def is_denial(error: str) -> bool:
+    """Returns whether a tool error says a person, a hook or the permission classifier refused the call."""
+    return bool(_DENIED.search(error))
+
+
+def iter_entries(*, root: Path, since: datetime, subagents: bool) -> Iterator[dict]:
     """Yields transcript entries newer than `since`, skipping lines that are not JSON objects."""
     files = 0
     for path in sorted(root.rglob('*.jsonl')):
@@ -101,7 +111,7 @@ def _iter_entries(*, root: Path, since: datetime, subagents: bool) -> Iterator[d
 
 
 def _iter_typed(*, root: Path, since: datetime) -> Iterator[str]:
-    for e in _iter_entries(root=root, since=since, subagents=False):
+    for e in iter_entries(root=root, since=since, subagents=False):
         if text := _typed_text(e):
             yield text
 
@@ -143,7 +153,7 @@ def _attempt(tool_input) -> str:
     return json.dumps(tool_input)[:200]
 
 
-def _error_line(content) -> str:
+def error_line(content) -> str:
     """Returns the first line of a tool error that says something."""
     text = content if isinstance(content, str) else ' '.join(
         b.get('text', '') for b in content or [] if isinstance(b, dict) and b.get('type') == 'text'

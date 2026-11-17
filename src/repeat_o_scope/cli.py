@@ -18,11 +18,6 @@ _GO_AHEAD = re.compile(
     r'|commit|commit it|commit and push|commit, push and open mr|post|post it|post them|continue|proceed|sure'
     r'|yep|please do)[.!]*$'
 )
-# Tool calls refused by a person, a hook or the permission classifier: not failures to automate away.
-_DENIED = re.compile(
-    r"permission for this action was denied|doesn't want to proceed|denied this in vjuu|hook error|blocked by",
-    re.IGNORECASE,
-)
 _MIN_SIZE = 4
 _MAX_EXAMPLES = 3
 
@@ -146,7 +141,7 @@ class Scope:
         failed, denied = collections.defaultdict(list), collections.defaultdict(list)
         for f in transcripts.iter_tool_failures(root=self._root, since=self._since):
             key = cluster.normalise(f'{f.tool}: {f.error}')
-            (denied if _DENIED.search(f.error) else failed)[key].append(f)
+            (denied if transcripts.is_denial(f.error) else failed)[key].append(f)
         failure_clusters, failure_noise = cluster.rank(_repeated(failed), min_size=_MIN_SIZE)
         note, label = '', None
         if self._jev and failure_clusters:
