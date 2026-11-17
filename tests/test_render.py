@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import subprocess
@@ -78,6 +79,44 @@ def test_json_utf8_on_legacy_console(transcripts, tmp_path):
     )
     assert run.returncode == 0, run.stderr.decode('utf-8', 'replace')
     assert 'tämä → ✓' in run.stdout.decode('utf-8')
+
+
+def _doctor_checks():
+    from repeat_o_scope.doctor import Check
+
+    return [
+        Check('effort', False, 'high (~/.claude/settings.json)', 'Set effort to medium in /config.'),
+        Check('status_line', True, '~/.claude/settings.json', ''),
+    ]
+
+
+def test_checks_markdown():
+    from repeat_o_scope import render
+
+    text = render.checks_markdown(_doctor_checks())
+    assert text.startswith('# Settings doctor'), text
+    assert '_1 of 2 checks to fix._' in text, text
+    assert '| Effort | ✗ | high (~/.claude/settings.json) | Set effort to medium in /config. |' in text, text
+    assert '| Status line | ✓ | ~/.claude/settings.json |  |' in text, text
+
+
+def test_checks_json():
+    from repeat_o_scope import render
+
+    doc = json.loads(render.checks_json(_doctor_checks()))
+    assert doc.pop('generated_at').endswith('+00:00')
+    assert doc == {
+        'report': 'doctor',
+        'checks': [dataclasses.asdict(c) for c in _doctor_checks()],
+    }
+
+
+def test_checks_table():
+    from repeat_o_scope import render
+
+    text = render.checks_table(_doctor_checks())
+    assert 'Settings doctor' in text and 'Effort' in text and '1 of 2 checks to fix.' in text, text
+    assert '|---' not in text and '─' in text, text
 
 
 def _measurement(**waste):

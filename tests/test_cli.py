@@ -1,7 +1,10 @@
+import json
 import subprocess
 import sys
 
-from repeat_o_scope import cli
+import pytest
+
+from repeat_o_scope import cli, findings
 
 
 def test_report_on_stdout_logs_on_stderr(transcripts, tmp_path):
@@ -68,6 +71,44 @@ def test_fails_report_separates_denials(transcripts):
     assert '4 × edit: file has not been read yet.' in failures, report
     assert '1 denials' in denials, report
     assert "doesn't want to proceed" not in failures, report
+
+
+def test_doctor_cli(tmp_path):
+    run = subprocess.run(
+        [
+            sys.executable, '-c', 'from repeat_o_scope.cli import main; main()',
+            'doctor', f'--claude_dir={tmp_path}', '--format=markdown',
+        ],
+        capture_output=True,
+        cwd=tmp_path,
+        encoding='utf-8',
+        timeout=120,
+    )
+    assert run.returncode == 0, run.stderr
+    assert run.stdout.startswith('# Settings doctor'), run.stdout
+    assert 'Checked' in run.stderr, run.stderr
+
+
+@pytest.mark.parametrize('format', [None, 'markdown', 'json'])
+def test_doctor_never_prints_secrets(tmp_path, monkeypatch, format):
+    (tmp_path / 'settings.json').write_text(
+        json.dumps({
+            'env': {'TOKEN': 'sekrit-1'},
+            'mcpServers': {'x': {'command': 'npx', 'env': {'KEY': 'sekrit-2'}}},
+            'statusLine': {'type': 'command', 'command': 'status --token sekrit-3'},
+        }),
+        encoding='utf-8',
+    )
+    monkeypatch.chdir(tmp_path)
+    out = cli.Scope(claude_dir=str(tmp_path), format=format).doctor()
+    assert 'Status line' in out or 'status_line' in out, out
+    assert 'sekrit' not in out, out
+
+
+def test_doctor_unknown_format(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(findings.RepeatOScopeError, match='xml'):
+        cli.Scope(claude_dir=str(tmp_path), format='xml').doctor()
 
 
 def test_measure_cli(transcripts, tmp_path):

@@ -5,9 +5,18 @@ import json
 import re
 from datetime import datetime, timezone
 
+from repeat_o_scope.doctor import Check
 from repeat_o_scope.findings import Finding, Report
 from repeat_o_scope.waste import Measurement, Tally
 
+_CHECK_LABELS = {
+    'effort': 'Effort',
+    'skill_overrides': 'Skill overrides',
+    'skills': 'Enabled skills',
+    'status_line': 'Status line',
+    'scope_rule': 'Scope rule',
+    'read_once_rule': 'Read-once rule',
+}
 _KIND_LABELS = {
     'refused_edit': 'Refused edits',
     'reread': 'Re-reads',
@@ -140,6 +149,47 @@ def _share(weight: float, total: Tally) -> float:
 
 def _eur(t: Tally, *, price: float) -> float:
     return t.weight / 1e6 * price
+
+
+def checks_markdown(checks: list[Check]) -> str:
+    """Returns the doctor's checks as a markdown table."""
+    lines = ['# Settings doctor', '', f'_{_checks_headline(checks)}_', '', '| Check | OK | Found | Fix |', '|---|---|---|---|']
+    lines += ['| ' + ' | '.join(row) + ' |' for row in _checks_rows(checks)]
+    return '\n'.join(lines)
+
+
+def checks_table(checks: list[Check]) -> str:
+    """Returns the doctor's checks as a rich table for a terminal."""
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title='Settings doctor', caption=_checks_headline(checks))
+    for column in ('Check', 'OK', 'Found', 'Fix'):
+        table.add_column(column)
+    for row in _checks_rows(checks):
+        table.add_row(*row)
+    console = Console()
+    with console.capture() as captured:
+        console.print(table)
+    return captured.get()
+
+
+def checks_json(checks: list[Check]) -> str:
+    """Returns the doctor's checks as JSON."""
+    doc = {
+        'report': 'doctor',
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'checks': [dataclasses.asdict(c) for c in checks],
+    }
+    return json.dumps(doc, ensure_ascii=False, indent=2)
+
+
+def _checks_headline(checks: list[Check]) -> str:
+    return f'{sum(not c.ok for c in checks)} of {len(checks)} checks to fix.'
+
+
+def _checks_rows(checks: list[Check]) -> list[list[str]]:
+    return [[_CHECK_LABELS[c.name], '✓' if c.ok else '✗', c.found, c.fix] for c in checks]
 
 
 def _section(heading: str, found: list[Finding], *, days: int, note: str, summary: str, top: int) -> str:
