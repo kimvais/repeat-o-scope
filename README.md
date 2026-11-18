@@ -58,7 +58,8 @@ repeat-o-scope measure    # turns wasted per kind, and their share of your usage
 ```
 
 Each report reads the transcripts under `~/.claude/projects` from the last 30 days (`--days`), and prints
-markdown on stdout (`--top` groups, default 20). Progress logging goes to stderr.
+markdown on stdout (`--top` groups, default 20). Progress logging goes to stderr; `measure` and `audit` also show a
+progress bar there while they read the transcripts.
 
 - `--format json` prints every finding as JSON for the skill: an `id`, a `kind`, a `total`, the `variants`,
   up to 3 redacted `examples`, and Jev's `label`.

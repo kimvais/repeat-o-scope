@@ -105,13 +105,14 @@ def is_denial(error: str) -> bool:
     return bool(_DENIED.search(error))
 
 
-def iter_entries(*, root: Path, since: datetime, subagents: bool) -> Iterator[dict]:
+def iter_entries(*, progress: bool = False, root: Path, since: datetime, subagents: bool) -> Iterator[dict]:
     """Yields transcript entries newer than `since`, skipping lines that are not JSON objects."""
-    files = 0
-    for path in sorted(root.rglob('*.jsonl')):
-        if path.stat().st_mtime < since.timestamp() or (not subagents and 'subagents' in path.parts):
-            continue
-        files += 1
+    paths = [
+        path
+        for path in sorted(root.rglob('*.jsonl'))
+        if path.stat().st_mtime >= since.timestamp() and (subagents or 'subagents' not in path.parts)
+    ]
+    for path in _tracked(paths) if progress else paths:
         with path.open(encoding='utf-8', errors='replace') as f:
             for line in f:
                 try:
@@ -120,7 +121,22 @@ def iter_entries(*, root: Path, since: datetime, subagents: bool) -> Iterator[di
                     continue
                 if isinstance(e, dict) and _newer(e.get('timestamp'), since):
                     yield e
-    _LOGGER.info('Read `%s` transcripts from `%s`.', files, root)
+    _LOGGER.info('Read `%s` transcripts from `%s`.', len(paths), root)
+
+
+def _tracked(paths: list[Path]) -> Iterator[Path]:
+    """Yields `paths` while a bar on stderr fills by their size; a big session takes far longer than a small one."""
+    from rich.console import Console
+    from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TimeRemainingColumn
+
+    sizes = [path.stat().st_size for path in paths]
+    # Transient: the bar is gone once reading is done, and a console that isn't a terminal never shows it.
+    columns = (TextColumn('Reading transcripts'), BarColumn(), DownloadColumn(), TimeRemainingColumn())
+    with Progress(*columns, console=Console(stderr=True), transient=True) as bar:
+        task = bar.add_task('read', total=sum(sizes))
+        for path, size in zip(paths, sizes):
+            yield path
+            bar.advance(task, size)
 
 
 def _iter_typed(*, root: Path, since: datetime) -> Iterator[str]:

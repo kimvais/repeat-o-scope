@@ -79,7 +79,7 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     seen: dict[tuple, set[tuple]] = collections.defaultdict(set)
     closing: dict[tuple, str] = {}
     go_ahead: dict[tuple, str] = {}
-    for e in transcripts.iter_entries(root=root, since=since, subagents=True):
+    for e in transcripts.iter_entries(progress=True, root=root, since=since, subagents=True):
         # Cowork's audit.jsonl uses the Agent SDK's `session_id`.
         context = (e.get('sessionId') or e.get('session_id'), e.get('agentId'))
         if e.get('isCompactSummary'):
