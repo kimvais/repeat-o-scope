@@ -63,7 +63,10 @@ class Measurement:
 
 
 @dataclass(frozen=True)
-class _Call:
+class Call:
+    """One API call: when, in which context (session, subagent), on which model, and its token usage."""
+
+    id: str
     at: datetime | None
     context: tuple
     model: str | None
@@ -72,7 +75,7 @@ class _Call:
 
 def measure(*, days: int, root: Path, since: datetime) -> Measurement:
     """Returns the turns and tokens spent in the window, and those wasted per kind."""
-    calls: dict[str, _Call] = {}
+    calls: dict[str, Call] = {}
     # Call id -> (kind, evidence); the first charge wins.
     charges: dict[str, tuple[str, str]] = {}
     issuer: dict[str, tuple[str, str]] = {}
@@ -89,29 +92,21 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
         if (text := transcripts.typed_text(e)) and context in closing and transcripts.is_go_ahead(text):
             go_ahead[context] = closing[context]
         message = e.get('message') or {}
-        call_id, usage = message.get('id'), message.get('usage')
-        is_call = e.get('type') == 'assistant' and isinstance(call_id, str) and isinstance(usage, dict)
-        if is_call:
-            model = message.get('model')
-            calls.setdefault(call_id, _Call(
-                at=_timestamp(e),
-                context=context,
-                model=model if isinstance(model, str) else None,
-                usage=usage,
-            ))
+        if (call := as_call(e)) is not None:
+            calls.setdefault(call.id, call)
             if line := transcripts.last_line(transcripts.message_text(e)):
                 closing[context] = line
             else:
                 closing.setdefault(context, '')
             if context in go_ahead:
-                charges.setdefault(call_id, ('bare_yes', go_ahead.pop(context)))
+                charges.setdefault(call.id, ('bare_yes', go_ahead.pop(context)))
         for block in _blocks(message):
-            if block.get('type') == 'tool_use' and is_call:
+            if block.get('type') == 'tool_use' and call is not None:
                 tool_input = block.get('input')
-                issuer[block.get('id')] = (call_id, f'{block.get("name") or "?"}: {transcripts.attempt(tool_input)}')
+                issuer[block.get('id')] = (call.id, f'{block.get("name") or "?"}: {transcripts.attempt(tool_input)}')
                 if _is_reread(block, seen=seen[context]):
                     path = tool_input.get('file_path') or tool_input.get('notebook_path')
-                    charges.setdefault(call_id, ('reread', path))
+                    charges.setdefault(call.id, ('reread', path))
             elif block.get('type') == 'tool_result' and block.get('is_error'):
                 if (by := issuer.get(block.get('tool_use_id'))) is not None:
                     error = transcripts.error_line(block.get('content'))
@@ -135,6 +130,21 @@ def measure(*, days: int, root: Path, since: datetime) -> Measurement:
         if c in charges
     ]
     return Measurement(days=days, total=total, waste=waste, charges=charged)
+
+
+def as_call(e: dict) -> Call | None:
+    """Returns the API call a transcript entry records, or None for an entry that records none."""
+    message = e.get('message') or {}
+    call_id, model, usage = message.get('id'), message.get('model'), message.get('usage')
+    if e.get('type') != 'assistant' or not isinstance(call_id, str) or not isinstance(usage, dict):
+        return None
+    return Call(
+        id=call_id,
+        at=_timestamp(e),
+        context=(e.get('sessionId') or e.get('session_id'), e.get('agentId')),
+        model=model if isinstance(model, str) else None,
+        usage=usage,
+    )
 
 
 def _blocks(message: dict) -> Iterator[dict]:
@@ -169,7 +179,7 @@ def _windows(calls) -> dict[tuple, int]:
     return {c: next((w for w in _CONTEXT_WINDOWS if w >= n), _CONTEXT_WINDOWS[-1]) for c, n in largest.items()}
 
 
-def _rebuilds(calls: dict[str, _Call], *, charged) -> dict[str, tuple[int, float]]:
+def _rebuilds(calls: dict[str, Call], *, charged) -> dict[str, tuple[int, float]]:
     """Returns the tokens and extra weight of each uncharged call that rewrote a cache that expired in a gap."""
     # The extra weight is what writing the previous context again cost above reading it from a warm cache.
     by_context = collections.defaultdict(list)
@@ -180,17 +190,17 @@ def _rebuilds(calls: dict[str, _Call], *, charged) -> dict[str, tuple[int, float
     for timed in by_context.values():
         ttl = _ttl([call for _, _, call in timed])
         for (prev_at, _, prev), (at, call_id, call) in pairwise(sorted(timed, key=lambda t: t[0])):
-            written = _count(call.usage, 'cache_creation_input_tokens')
+            written = token_count(call.usage, 'cache_creation_input_tokens')
             if at - prev_at > ttl and written and call_id not in charged:
                 tokens = min(written, _context(prev.usage))
                 rebuilt[call_id] = (tokens, tokens * (_write_weight(call.usage) / written - _read_ratio(call.model)))
     return rebuilt
 
 
-def _ttl(calls: list[_Call]) -> timedelta:
+def _ttl(calls: list[Call]) -> timedelta:
     """Returns a context's cache lifetime: 1 hour if most of its cache writes were 1-hour ones."""
-    written = sum(_count(c.usage, 'cache_creation_input_tokens') for c in calls)
-    one_hour = sum(_count(_split(c.usage), 'ephemeral_1h_input_tokens') for c in calls)
+    written = sum(token_count(c.usage, 'cache_creation_input_tokens') for c in calls)
+    one_hour = sum(token_count(_split(c.usage), 'ephemeral_1h_input_tokens') for c in calls)
     return _TTL_1H if one_hour * 2 > written else _TTL_5M
 
 
@@ -201,18 +211,18 @@ def _timestamp(e: dict) -> datetime | None:
         return None
 
 
-def _long_context(uncharged: list[_Call], *, windows: dict[tuple, int]) -> Tally:
+def _long_context(uncharged: list[Call], *, windows: dict[tuple, int]) -> Tally:
     """Returns the tally of the context each call carried above half its window."""
     turns, tokens, weight = 0, 0, 0.0
     for call in uncharged:
         if (excess := _context(call.usage) - windows[call.context] // 2) > 0:
             turns, tokens = turns + 1, tokens + excess
-            weight += _weight(call) * excess / _context(call.usage)
+            weight += call_weight(call) * excess / _context(call.usage)
     return Tally(turns=turns, tokens=tokens, weight=weight)
 
 
 def _context(usage: dict) -> int:
-    return sum(_count(usage, key) for key in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
+    return sum(token_count(usage, key) for key in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
 
 
 def _error_kind(error: str) -> str:
@@ -221,29 +231,29 @@ def _error_kind(error: str) -> str:
     return 'refused_edit' if _REFUSED_EDIT in error else 'failed'
 
 
-def _tally(calls: list[_Call]) -> Tally:
+def _tally(calls: list[Call]) -> Tally:
     return Tally(
         turns=len(calls),
-        tokens=sum(_count(c.usage, key) for c in calls for key in _TOKEN_KEYS),
-        weight=sum(map(_weight, calls)),
+        tokens=sum(token_count(c.usage, key) for c in calls for key in _TOKEN_KEYS),
+        weight=sum(map(call_weight, calls)),
     )
 
 
-def _weight(call: _Call) -> float:
+def call_weight(call: Call) -> float:
     """Returns how much of a usage limit a call takes, in input-token equivalents."""
     usage = call.usage
     return (
-        _count(usage, 'input_tokens')
+        token_count(usage, 'input_tokens')
         + _write_weight(usage)
-        + _count(usage, 'cache_read_input_tokens') * _read_ratio(call.model)
-        + _count(usage, 'output_tokens') * _OUTPUT
+        + token_count(usage, 'cache_read_input_tokens') * _read_ratio(call.model)
+        + token_count(usage, 'output_tokens') * _OUTPUT
     )
 
 
 def _write_weight(usage: dict) -> float:
     """Returns the weight of a call's cache writes; a write without the TTL split counts as 5-minute."""
-    written = _count(usage, 'cache_creation_input_tokens')
-    one_hour = min(_count(_split(usage), 'ephemeral_1h_input_tokens'), written)
+    written = token_count(usage, 'cache_creation_input_tokens')
+    one_hour = min(token_count(_split(usage), 'ephemeral_1h_input_tokens'), written)
     return one_hour * _WRITE_1H + (written - one_hour) * _WRITE_5M
 
 
@@ -257,6 +267,6 @@ def _read_ratio(model: str | None) -> float:
     return next((r for prefix, r in _CACHE_READS.items() if model and model.startswith(prefix)), _CACHE_READ)
 
 
-def _count(usage: dict, key: str) -> int:
+def token_count(usage: dict, key: str) -> int:
     value = usage.get(key)
     return value if isinstance(value, int) else 0

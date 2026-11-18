@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from repeat_o_scope import audit, cluster, declined, doctor, findings, install, judge, judges, render, transcripts, waste
+from repeat_o_scope import audit, cluster, declined, doctor, findings, install, judge, judges, render, transcripts, usage, waste
 from repeat_o_scope.findings import Finding, Report, Variant
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +73,15 @@ class Scope:
             raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
         m = waste.measure(days=self._days, root=self._root, since=self._since)
         return renderers[self._format](m, price=self._price)
+
+    def usage(self) -> str:
+        """Sessions, turns and tokens per model, and their share of your usage. `--price` adds € per million input tokens."""
+        # No --format means a person at a terminal; agents ask for markdown or json.
+        renderers = {None: render.usage_table, 'markdown': render.usage_markdown, 'json': render.usage_json}
+        if self._format not in renderers:
+            raise findings.RepeatOScopeError(f'Unknown format `{self._format}`, expected markdown or json!')
+        u = usage.count(days=self._days, root=self._root, since=self._since)
+        return renderers[self._format](u, price=self._price)
 
     def doctor(self) -> str:
         """Checks your settings and CLAUDE.md against the budget checklist in docs/why.md."""
