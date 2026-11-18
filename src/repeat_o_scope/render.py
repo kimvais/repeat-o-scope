@@ -3,11 +3,13 @@
 import dataclasses
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from repeat_o_scope.audit import Audit
 from repeat_o_scope.doctor import Check
 from repeat_o_scope.findings import Finding, Report
+from repeat_o_scope.usage import Row, Usage
 from repeat_o_scope.waste import Measurement, Tally
 
 _CHECK_LABELS = {
@@ -131,7 +133,7 @@ def _measurement_header(*, price: float | None) -> list[str]:
 def _measurement_rows(m: Measurement, *, price: float | None) -> list[list[str]]:
     return [
         [_KIND_LABELS[kind], str(t.turns), f'{_share(t.weight, m.total):.1%}', f'{t.tokens:,}']
-        + ([f'€{_eur(t, price=price):.2f}'] if price is not None else [])
+        + ([f'€{_eur(t.weight, price=price):.2f}'] if price is not None else [])
         for kind, t in sorted(m.waste.items(), key=lambda kv: -kv[1].tokens)
     ]
 
@@ -148,12 +150,101 @@ def measurement_json(m: Measurement, *, price: float | None) -> str:
 
 def _measurement_doc(m: Measurement, *, price: float | None) -> dict:
     def tally(t: Tally) -> dict:
-        return dataclasses.asdict(t) | ({'eur': round(_eur(t, price=price), 2)} if price is not None else {})
+        return dataclasses.asdict(t) | ({'eur': round(_eur(t.weight, price=price), 2)} if price is not None else {})
 
     return {
         'total': tally(m.total),
         'waste': {kind: tally(t) | {'share': _share(t.weight, m.total)} for kind, t in m.waste.items()},
     }
+
+
+def usage_markdown(u: Usage, *, price: float | None) -> str:
+    """Returns the usage per model as a markdown table, with euros only when `price` is set."""
+    header = _usage_header(price=price)
+    lines = [
+        '# Usage',
+        '',
+        f'_{_usage_headline(u)}_',
+        '',
+        '| ' + ' | '.join(header) + ' |',
+        '|---|' + '---:|' * (len(header) - 1),
+    ]
+    lines += ['| ' + ' | '.join(row) + ' |' for row in _usage_rows(u, number='{:,}'.format, price=price)]
+    return '\n'.join(lines)
+
+
+def usage_table(u: Usage, *, price: float | None) -> str:
+    """Returns the usage per model as a rich table for a terminal, with euros only when `price` is set."""
+    from rich.console import Console
+    from rich.table import Table
+
+    table = Table(title='Usage', caption=_usage_headline(u))
+    for i, column in enumerate(_usage_header(price=price)):
+        # The model is the row's name: narrow the numbers before cutting it.
+        table.add_column(column, justify='left' if i == 0 else 'right', no_wrap=i == 0)
+    rows = _usage_rows(u, number=_compact, price=price)
+    for i, row in enumerate(rows):
+        table.add_row(*row, end_section=i == len(rows) - 2)
+    console = Console()
+    with console.capture() as captured:
+        console.print(table)
+    return captured.get()
+
+
+def usage_json(u: Usage, *, price: float | None) -> str:
+    """Returns the usage per model as JSON, with `eur` only when `price` is set."""
+    def row(r: Row) -> dict:
+        return (
+            dataclasses.asdict(r)
+            | {'tokens': r.tokens, 'share': _share(r.weight, u.total)}
+            | ({'eur': round(_eur(r.weight, price=price), 2)} if price is not None else {})
+        )
+
+    doc = {
+        'report': 'usage',
+        'days': u.days,
+        'generated_at': datetime.now(timezone.utc).isoformat(),
+        'total': row(u.total),
+        'models': [row(r) for r in u.models],
+    }
+    return json.dumps(doc, ensure_ascii=False, indent=2)
+
+
+def _usage_headline(u: Usage) -> str:
+    t = u.total
+    return f'Last {u.days} days: {t.sessions:,} sessions, {t.turns:,} turns, {t.tokens:,} tokens.'
+
+
+def _compact(n: int) -> str:
+    """Returns `n` as 1.4B, 26.2M or 3.1k: a session's token counts run to ten digits and overflow a terminal."""
+    for unit, size in (('B', 10**9), ('M', 10**6), ('k', 10**3)):
+        if n >= size:
+            return f'{n / size:.1f}{unit}'
+    return str(n)
+
+
+def _usage_header(*, price: float | None) -> list[str]:
+    return (
+        ['Model', 'Sessions', 'Turns', 'Input', 'Cache writes', 'Cache reads', 'Output', 'Share of usage']
+        + (['€'] if price is not None else [])
+    )
+
+
+def _usage_rows(u: Usage, *, number: Callable[[int], str], price: float | None) -> list[list[str]]:
+    return [
+        [
+            r.model,
+            f'{r.sessions:,}',
+            f'{r.turns:,}',
+            number(r.input),
+            number(r.cache_write),
+            number(r.cache_read),
+            number(r.output),
+            f'{_share(r.weight, u.total):.1%}',
+        ]
+        + ([f'€{_eur(r.weight, price=price):.2f}'] if price is not None else [])
+        for r in [*u.models, u.total]
+    ]
 
 
 def audit_json(a: Audit) -> str:
@@ -185,8 +276,8 @@ def _share(weight: float, total: Tally) -> float:
     return weight / total.weight if total.weight else 0.0
 
 
-def _eur(t: Tally, *, price: float) -> float:
-    return t.weight / 1e6 * price
+def _eur(weight: float, *, price: float) -> float:
+    return weight / 1e6 * price
 
 
 def checks_markdown(checks: list[Check]) -> str:

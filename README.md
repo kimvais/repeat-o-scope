@@ -55,10 +55,12 @@ repeat-o-scope commands   # `!` shell commands you keep running by hand
 repeat-o-scope asks       # Claude turn endings you answered with a bare "ship" / "go" / "yes"
 repeat-o-scope fails      # tool calls that keep failing, with denials listed apart
 repeat-o-scope measure    # turns wasted per kind, and their share of your usage
+repeat-o-scope usage      # sessions, turns and tokens per model
 ```
 
 Each report reads the transcripts under `~/.claude/projects` from the last 30 days (`--days`), and prints
-markdown on stdout (`--top` groups, default 20). Progress logging goes to stderr.
+markdown on stdout (`--top` groups, default 20). Progress logging goes to stderr; `measure`, `audit` and `usage` also
+show a progress bar there while they read the transcripts.
 
 - `--format json` prints every finding as JSON for the skill: an `id`, a `kind`, a `total`, the `variants`,
   up to 3 redacted `examples`, and Jev's `label`.
@@ -107,6 +109,13 @@ priced per million input tokens. Caveats:
   `repeat-o-scope measure --root="$env:LOCALAPPDATA\Claude-Data\claude_<id>\local-agent-mode-sessions"`.
 - Transcripts don't say whether a session ran with a 200k or 1M context window. Each session gets the
   smallest one that fits its largest call.
+
+### `usage`
+
+`usage` counts what you used, wasted or not: per model, the sessions, turns (API calls) and input, cache write,
+cache read and output tokens, plus each model's share of your usage, weighted as in `measure`. Subagents count
+towards their parent's session. It prints a table for the terminal; `--format markdown` or `--format json` gives
+agents plain text, and `--price` adds €.
 
 ## Doctor
 

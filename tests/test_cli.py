@@ -126,3 +126,20 @@ def test_measure_cli(transcripts, tmp_path):
     assert 'Wasted turns' in run.stdout and 'Refused edits' in run.stdout, run.stdout
     assert '|---' not in run.stdout, run.stdout
     assert 'Measured' in run.stderr, run.stderr
+
+
+def test_usage_cli(transcripts, tmp_path):
+    transcripts.write([transcripts.user('ship')])
+    run = subprocess.run(
+        [
+            sys.executable, '-c', 'from repeat_o_scope.cli import main; main()',
+            'usage', f'--root={transcripts.root}', f'--data_dir={tmp_path / "data"}',
+        ],
+        capture_output=True,
+        encoding='utf-8',
+        timeout=120,
+    )
+    assert run.returncode == 0, run.stderr
+    assert 'Usage' in run.stdout and 'Sessions' in run.stdout, run.stdout
+    assert 'Reading transcripts' not in run.stdout + run.stderr, run.stderr
+    assert 'Counted' in run.stderr, run.stderr
